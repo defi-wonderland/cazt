@@ -1,0 +1,52 @@
+{
+  "name": "cazt",
+  "version": "3.0.0-devnet.2",
+  "description": "cast-like CLI for Aztec",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "cazt": "bin/cazt"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x bin/cazt",
+    "build-aztec-standards": "npx tsx scripts/build-aztec-standards.ts origin/dev",
+    "start": "tsx cli/cli.ts",
+    "test": "yarn test:js",
+    "test:js": "NODE_NO_WARNINGS=1 NODE_OPTIONS='--experimental-vm-modules' yarn jest --no-cache --runInBand --config jest.config.json",
+    "clean": "rm -rf dist"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    ".aztec-standards"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/defi-wonderland/cazt.git"
+  },
+  "author": "Wonderland",
+  "license": "MIT",
+  "dependencies": {
+    "@aztec/aztec.js": "3.0.0-devnet.2",
+    "@aztec/foundation": "3.0.0-devnet.2",
+    "@aztec/stdlib": "3.0.0-devnet.2",
+    "@aztec/test-wallet": "3.0.0-devnet.2",
+    "commander": "^12.1.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/jest": "29.5.11",
+    "@types/node": "^22.10.2",
+    "jest": "29.7.0",
+    "ts-jest": "29.2.5",
+    "ts-node": "10.9.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  },
+  "jest": {
+    "testTimeout": 200000
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+}
