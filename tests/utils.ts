@@ -567,3 +567,56 @@ export function isValidImportedKeyJson(obj: any): boolean {
     isValidAztecAddress(obj.address)
   );
 }
+
+/**
+ * Test vectors for key export
+ */
+export const EXPORT_KEY_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Exported Secret Key/,
+      separator: /={50}/,
+      aliasLabel: /Alias:/,
+      secretLabel: /Secret:/,
+      addressLabel: /Address:/,
+      createdLabel: /Created:/,
+      updatedLabel: /Updated:/,
+      warningLabel: /WARNING:/,
+      keyValue: /0x[0-9a-f]+/i,
+      securityWarning: /Handle this secret key carefully/,
+    },
+    json: {
+      hasAlias: /"alias"\s*:/,
+      hasSecret: /"secret"\s*:/,
+      hasAddress: /"address"\s*:/,
+      hasCreatedAt: /"createdAt"\s*:/,
+      hasUpdatedAt: /"updatedAt"\s*:/,
+      hasWarning: /"warning"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+
+  // Expected warning text
+  expectedWarning: 'SECURITY WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.',
+};
+
+/**
+ * Validates the structure of an ExportedKey JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidExportedKeyJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.alias === 'string' &&
+    typeof obj.secret === 'string' &&
+    typeof obj.address === 'string' &&
+    typeof obj.createdAt === 'string' &&
+    typeof obj.updatedAt === 'string' &&
+    typeof obj.warning === 'string' &&
+    isValidSecretKey(obj.secret) &&
+    isValidAztecAddress(obj.address)
+  );
+}

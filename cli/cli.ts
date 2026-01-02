@@ -251,6 +251,35 @@ keyCmd
     }
   });
 
+keyCmd
+  .command('export <alias>')
+  .description('Export a secret key by its alias from local storage')
+  .action(async (alias: string) => {
+    try {
+      const { WalletUtils } = await import('./utils/wallet.js');
+      const result = await WalletUtils.exportKey(alias);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Exported Secret Key');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Alias: ${result.alias}`);
+        console.log(`Secret: ${result.secret}`);
+        console.log(`Address: ${result.address}`);
+        console.log('');
+        console.log(`Created: ${new Date(result.createdAt).toLocaleString()}`);
+        console.log(`Updated: ${new Date(result.updatedAt).toLocaleString()}`);
+        console.log('');
+        console.log(`WARNING: ${result.warning}`);
+      }
+    } catch (error: any) {
+      console.error(`Error exporting key: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 

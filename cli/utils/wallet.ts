@@ -65,6 +65,18 @@ export interface ImportedKey {
 }
 
 /**
+ * Result type for key export
+ */
+export interface ExportedKey {
+  alias: string;
+  secret: string;
+  address: string;
+  createdAt: string;
+  updatedAt: string;
+  warning: string;
+}
+
+/**
  * Wallet utilities for key operations
  */
 export class WalletUtils {
@@ -182,6 +194,28 @@ export class WalletUtils {
       stored: true,
       keystorePath: KeyStore.getKeysFilePath(),
       warning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
+    };
+  }
+
+  /**
+   * Export a secret key by its alias from local storage
+   * @param alias - Alias of the key to export
+   * @returns Information about the exported key including timestamps
+   */
+  static async exportKey(alias: string): Promise<ExportedKey> {
+    // Load the key from keystore
+    const storedKey = await KeyStore.load(alias);
+
+    // Derive the address for verification
+    const { address } = await this.deriveAddress(storedKey.secret);
+
+    return {
+      alias: storedKey.alias,
+      secret: storedKey.secret,
+      address,
+      createdAt: storedKey.createdAt,
+      updatedAt: storedKey.updatedAt,
+      warning: 'SECURITY WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.',
     };
   }
 }
