@@ -10,6 +10,10 @@ import {
   isValidDerivedKeysJson,
   extractDerivedSecretKeys,
   extractDerivedPublicKeys,
+  isValidAztecAddress,
+  extractAddress,
+  isValidDerivedAddressJson,
+  DERIVE_ADDRESS_TEST_VECTORS,
 } from './utils.js';
 
 // Mock console methods to capture output
@@ -47,7 +51,7 @@ async function executeCommand(args: string[], expectError = false): Promise<stri
   const originalExit = process.exit;
   let exitCalled = false;
   let exitCode: number | undefined;
-  
+
   // Mock process.exit to prevent actual exit
   process.exit = ((code?: number) => {
     exitCalled = true;
@@ -56,10 +60,19 @@ async function executeCommand(args: string[], expectError = false): Promise<stri
       throw new Error(`Process exited with code ${code || 0}`);
     }
   }) as typeof process.exit;
-  
+
   process.argv = ['node', 'cli.js', ...args];
-  
+
   try {
+    // Reset options to defaults before parsing to avoid state pollution
+    // Commander.js retains options between parseAsync calls
+    // Reset both program and all subcommands
+    function resetCommandOptions(cmd: any): void {
+      cmd._optionValues = {};
+      cmd.commands.forEach((subcmd: any) => resetCommandOptions(subcmd));
+    }
+    resetCommandOptions(program);
+
     await program.parseAsync(process.argv);
     if (expectError && !exitCalled) {
       throw new Error('Expected command to fail but it succeeded');
@@ -462,6 +475,188 @@ describe('CLI Commands', () => {
           expect(secretKeysHeaderPos).toBeGreaterThan(0);
           expect(publicKeysHeaderPos).toBeGreaterThan(0);
           expect(secretKeysHeaderPos).toBeLessThan(publicKeysHeaderPos);
+        });
+      });
+    });
+
+    describe('derive-address subcommand', () => {
+      const testSecret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+      it('should derive account address from secret key with human-readable output', async () => {
+        const output = await executeCommand(['key', 'derive-address', testSecret]);
+
+        // Check for expected output structure
+        expect(output).toMatch(DERIVE_ADDRESS_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toMatch(DERIVE_ADDRESS_TEST_VECTORS.patterns.humanReadable.separator);
+        expect(output).toMatch(DERIVE_ADDRESS_TEST_VECTORS.patterns.humanReadable.addressLabel);
+
+        // Check for address value in output
+        expect(output).toMatch(DERIVE_ADDRESS_TEST_VECTORS.patterns.humanReadable.addressValue);
+      });
+
+      it('should derive a valid Aztec address', async () => {
+        const output = await executeCommand(['key', 'derive-address', testSecret]);
+
+        // Extract the address
+        const address = extractAddress(output);
+
+        expect(address).not.toBeNull();
+        expect(isValidAztecAddress(address!)).toBe(true);
+      });
+
+      it('should derive the correct address for known test vectors', async () => {
+        for (const testCase of DERIVE_ADDRESS_TEST_VECTORS.knownAddresses) {
+          const args = ['key', 'derive-address', testCase.secretKey];
+          if (testCase.salt !== undefined) {
+            args.push('--salt', testCase.salt);
+          }
+
+          const output = await executeCommand(args);
+          const address = extractAddress(output);
+
+          expect(address).toBe(testCase.expectedAddress);
+        }
+      });
+
+      it('should derive the same address for the same secret key (deterministic)', async () => {
+        const output1 = await executeCommand(['key', 'derive-address', testSecret]);
+        const output2 = await executeCommand(['key', 'derive-address', testSecret]);
+
+        const address1 = extractAddress(output1);
+        const address2 = extractAddress(output2);
+
+        expect(address1).not.toBeNull();
+        expect(address2).not.toBeNull();
+        expect(address1).toBe(address2);
+      });
+
+      it('should derive different addresses for different secret keys', async () => {
+        const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000002';
+
+        const output1 = await executeCommand(['key', 'derive-address', secret1]);
+        const output2 = await executeCommand(['key', 'derive-address', secret2]);
+
+        const address1 = extractAddress(output1);
+        const address2 = extractAddress(output2);
+
+        expect(address1).not.toBeNull();
+        expect(address2).not.toBeNull();
+        expect(address1).not.toBe(address2);
+      });
+
+      it('should handle various secret key formats', async () => {
+        for (const testCase of DERIVE_ADDRESS_TEST_VECTORS.randomSecretTests) {
+          const output = await executeCommand(['key', 'derive-address', testCase.secretKey]);
+          const address = extractAddress(output);
+
+          expect(address).not.toBeNull();
+          expect(isValidAztecAddress(address!)).toBe(true);
+        }
+      });
+
+      it('should output JSON when --json flag is used', async () => {
+        const output = await executeCommand(['key', 'derive-address', testSecret, '--json']);
+
+        // Should be valid JSON
+        expect(output).toMatch(DERIVE_ADDRESS_TEST_VECTORS.patterns.json.validJson);
+        expect(output).toMatch(DERIVE_ADDRESS_TEST_VECTORS.patterns.json.hasAddress);
+
+        const parsed = parseJsonOutput(output);
+        expect(isValidDerivedAddressJson(parsed)).toBe(true);
+      });
+
+      it('should produce correct address in JSON format', async () => {
+        const knownTest = DERIVE_ADDRESS_TEST_VECTORS.knownAddresses[0];
+        const output = await executeCommand(['key', 'derive-address', knownTest.secretKey, '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(parsed.address).toBe(knownTest.expectedAddress);
+      });
+
+      it('should not include JSON formatting in human-readable output', async () => {
+        const output = await executeCommand(['key', 'derive-address', testSecret]);
+
+        // Human-readable output should not contain JSON-like formatting
+        expect(output).not.toMatch(/"address"/);
+
+        // But should contain the actual label
+        expect(output).toContain('Address:');
+      });
+
+      // Tests with --salt option
+      describe('with --salt option', () => {
+        it('should accept salt parameter', async () => {
+          const salt = '0x1234567890abcdef';
+          const output = await executeCommand(['key', 'derive-address', testSecret, '--salt', salt]);
+
+          // Should show salt in output
+          expect(output).toMatch(DERIVE_ADDRESS_TEST_VECTORS.patterns.humanReadable.saltLabel);
+          expect(output).toContain(salt);
+
+          // Should still produce a valid address
+          const address = extractAddress(output);
+          expect(address).not.toBeNull();
+          expect(isValidAztecAddress(address!)).toBe(true);
+        });
+
+        it('should derive different addresses with different salts', async () => {
+          const salt1 = '0';
+          const salt2 = '1';
+
+          const output1 = await executeCommand(['key', 'derive-address', testSecret, '--salt', salt1]);
+          const output2 = await executeCommand(['key', 'derive-address', testSecret, '--salt', salt2]);
+
+          const address1 = extractAddress(output1);
+          const address2 = extractAddress(output2);
+
+          expect(address1).not.toBeNull();
+          expect(address2).not.toBeNull();
+          expect(address1).not.toBe(address2);
+        });
+
+        it('should derive the same address for the same secret and salt (deterministic)', async () => {
+          const salt = '0x42';
+
+          const output1 = await executeCommand(['key', 'derive-address', testSecret, '--salt', salt]);
+          const output2 = await executeCommand(['key', 'derive-address', testSecret, '--salt', salt]);
+
+          const address1 = extractAddress(output1);
+          const address2 = extractAddress(output2);
+
+          expect(address1).not.toBeNull();
+          expect(address2).not.toBeNull();
+          expect(address1).toBe(address2);
+        });
+
+        it('should handle various salt formats', async () => {
+          for (const testCase of DERIVE_ADDRESS_TEST_VECTORS.saltTests) {
+            const output = await executeCommand(['key', 'derive-address', testSecret, '--salt', testCase.salt]);
+            const address = extractAddress(output);
+
+            expect(address).not.toBeNull();
+            expect(isValidAztecAddress(address!)).toBe(true);
+          }
+        });
+
+        it('should produce correct addresses for known test vectors with salts', async () => {
+          const testWithSalt1 = DERIVE_ADDRESS_TEST_VECTORS.knownAddresses.find(t => t.salt === '1');
+          if (testWithSalt1) {
+            const output = await executeCommand(['key', 'derive-address', testWithSalt1.secretKey, '--salt', testWithSalt1.salt!]);
+            const address = extractAddress(output);
+            expect(address).toBe(testWithSalt1.expectedAddress);
+          }
+        });
+
+        it('should include salt in JSON output when provided', async () => {
+          const salt = '0x1234';
+          const output = await executeCommand(['key', 'derive-address', testSecret, '--salt', salt, '--json']);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(parsed.address).toBeDefined();
+          expect(isValidAztecAddress(parsed.address)).toBe(true);
         });
       });
     });

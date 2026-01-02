@@ -190,6 +190,33 @@ keyCmd
     }
   });
 
+keyCmd
+  .command('derive-address <secret>')
+  .description('Compute account address from secret key')
+  .option('--salt <salt>', 'Optional salt for address derivation')
+  .action(async (secret: string, options: { salt?: string }) => {
+    try {
+      const { WalletUtils } = await import('./utils/wallet.js');
+      const result = await WalletUtils.deriveAddress(secret, options.salt);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Derived Account Address');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Address: ${result.address}`);
+        if (options.salt) {
+          console.log('');
+          console.log(`Salt: ${options.salt}`);
+        }
+      }
+    } catch (error: any) {
+      console.error(`Error deriving address: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 

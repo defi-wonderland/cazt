@@ -3,8 +3,9 @@
  */
 
 import { Fr } from '@aztec/foundation/fields';
-import { randomBytes } from '@aztec/foundation/crypto';
 import { deriveKeys } from '@aztec/stdlib/keys';
+import { randomBytes } from '@aztec/foundation/crypto';
+import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
 
 /**
  * Result type for key generation
@@ -80,5 +81,23 @@ export class WalletUtils {
     }
 
     return result;
+  }
+
+  /**
+   * Derive account address from a secret key
+   * @param secretKeyStr - Secret key as a string (hex or decimal)
+   * @param saltStr - Optional salt for address derivation (defaults to 0)
+   * @returns The computed Aztec account address
+   */
+  static async deriveAddress(secretKeyStr: string, saltStr?: string): Promise<{ address: string }> {
+    const secretKey = Fr.fromString(secretKeyStr);
+    const salt = saltStr ? Fr.fromString(saltStr) : Fr.ZERO;
+
+    // Compute the Schnorr account contract address
+    const address = await getSchnorrAccountContractAddress(secretKey, salt);
+
+    return {
+      address: address.toString(),
+    };
   }
 }
