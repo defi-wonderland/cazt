@@ -154,6 +154,42 @@ keyCmd
     }
   });
 
+keyCmd
+  .command('derive-keys <secret>')
+  .description('Derive keys from secret key')
+  .option('--public', 'Include public keys in the output')
+  .action(async (secret: string, options: { public?: boolean }) => {
+    try {
+      const { WalletUtils } = await import('./utils/wallet.js');
+      const result = await WalletUtils.deriveKeysFromSecret(secret, options.public || false);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Derived Keys');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log('Secret Keys:');
+        console.log(`  Master Nullifier Secret Key: ${result.secretKeys.masterNullifierSecretKey}`);
+        console.log(`  Master Incoming Viewing Secret Key: ${result.secretKeys.masterIncomingViewingSecretKey}`);
+        console.log(`  Master Outgoing Viewing Secret Key: ${result.secretKeys.masterOutgoingViewingSecretKey}`);
+        console.log(`  Master Tagging Secret Key: ${result.secretKeys.masterTaggingSecretKey}`);
+
+        if (result.publicKeys) {
+          console.log('');
+          console.log('Public Keys:');
+          console.log(`  Master Nullifier Public Key: ${result.publicKeys.masterNullifierPublicKey}`);
+          console.log(`  Master Incoming Viewing Public Key: ${result.publicKeys.masterIncomingViewingPublicKey}`);
+          console.log(`  Master Outgoing Viewing Public Key: ${result.publicKeys.masterOutgoingViewingPublicKey}`);
+          console.log(`  Master Tagging Public Key: ${result.publicKeys.masterTaggingPublicKey}`);
+        }
+      }
+    } catch (error: any) {
+      console.error(`Error deriving keys: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 

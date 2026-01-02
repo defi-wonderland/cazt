@@ -4,6 +4,7 @@
 
 import { Fr } from '@aztec/foundation/fields';
 import { randomBytes } from '@aztec/foundation/crypto';
+import { deriveKeys } from '@aztec/stdlib/keys';
 
 /**
  * Result type for key generation
@@ -11,6 +12,24 @@ import { randomBytes } from '@aztec/foundation/crypto';
 export interface GeneratedKey {
   secretKey: string;
   warning: string;
+}
+
+/**
+ * Result type for derived keys
+ */
+export interface DerivedKeys {
+  secretKeys: {
+    masterNullifierSecretKey: string;
+    masterIncomingViewingSecretKey: string;
+    masterOutgoingViewingSecretKey: string;
+    masterTaggingSecretKey: string;
+  };
+  publicKeys?: {
+    masterNullifierPublicKey: string;
+    masterIncomingViewingPublicKey: string;
+    masterOutgoingViewingPublicKey: string;
+    masterTaggingPublicKey: string;
+  };
 }
 
 /**
@@ -28,5 +47,38 @@ export class WalletUtils {
       secretKey: secretKey.toString(),
       warning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control associated accounts.',
     };
+  }
+
+  /**
+   * Derive keys from a secret key
+   * @param secretKeyStr - Secret key as a string (hex or decimal)
+   * @param includePublic - Whether to include public keys in the output
+   * @returns The derived secret keys and optionally public keys
+   */
+  static async deriveKeysFromSecret(secretKeyStr: string, includePublic: boolean = false): Promise<DerivedKeys> {
+    const secretKey = Fr.fromString(secretKeyStr);
+
+    // Derive all keys from secret
+    const keys = await deriveKeys(secretKey);
+
+    const result: DerivedKeys = {
+      secretKeys: {
+        masterNullifierSecretKey: keys.masterNullifierSecretKey.toString(),
+        masterIncomingViewingSecretKey: keys.masterIncomingViewingSecretKey.toString(),
+        masterOutgoingViewingSecretKey: keys.masterOutgoingViewingSecretKey.toString(),
+        masterTaggingSecretKey: keys.masterTaggingSecretKey.toString(),
+      },
+    };
+
+    if (includePublic) {
+      result.publicKeys = {
+        masterNullifierPublicKey: keys.publicKeys.masterNullifierPublicKey.toString(),
+        masterIncomingViewingPublicKey: keys.publicKeys.masterIncomingViewingPublicKey.toString(),
+        masterOutgoingViewingPublicKey: keys.publicKeys.masterOutgoingViewingPublicKey.toString(),
+        masterTaggingPublicKey: keys.publicKeys.masterTaggingPublicKey.toString(),
+      };
+    }
+
+    return result;
   }
 }
