@@ -2,9 +2,9 @@
  * Wallet utility functions for key management
  */
 
-import { Fr } from '@aztec/foundation/fields';
+import { Fr, Fq, Point } from '@aztec/foundation/fields';
 import { deriveKeys } from '@aztec/stdlib/keys';
-import { randomBytes } from '@aztec/foundation/crypto';
+import { randomBytes, poseidon2Hash, Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
 import { KeyStore } from './keystore.js';
 
@@ -102,6 +102,25 @@ export interface ExportedKey {
  */
 export interface ListedKeys {
   aliases: string[];
+}
+
+/**
+ * Result type for signing a message
+ */
+export interface SignedMessage {
+  message: string;
+  signature: string;
+  publicKey: string;
+}
+
+/**
+ * Result type for verifying a signature
+ */
+export interface VerifiedSignature {
+  message: string;
+  signature: string;
+  publicKey: string;
+  valid: boolean;
 }
 
 /**
@@ -250,6 +269,113 @@ export class WalletUtils {
     // Extract just the aliases and return
     return {
       aliases: storedKeys.map(k => k.alias),
+    };
+  }
+
+  /**
+   * Sign a message using Schnorr signature
+   * @param message - The message to sign (string or hex-encoded bytes with 0x prefix)
+   * @param secretKeyStr - Secret key as a string (hex or decimal)
+   * @returns The signed message with signature and public key
+   */
+  static async signMessage(message: string, secretKeyStr: string): Promise<SignedMessage> {
+    // Validate and convert the secret key to Fr first
+    let secretKeyFr: Fr;
+    try {
+      secretKeyFr = Fr.fromString(secretKeyStr);
+    } catch (error: any) {
+      throw new Error(`Invalid secret key: ${error.message}`);
+    }
+
+    // Convert Fr to Fq (GrumpkinScalar) for Schnorr operations
+    // We do this by converting to buffer and back
+    const secretKey = Fq.fromBuffer(secretKeyFr.toBuffer());
+
+    // Convert the message to a buffer
+    // If message starts with 0x, treat it as hex-encoded bytes
+    // Otherwise, treat it as a UTF-8 string
+    let messageBuffer: Buffer;
+    if (message.startsWith('0x')) {
+      const hexStr = message.slice(2);
+      // Validate hex string
+      if (!/^[0-9a-fA-F]*$/.test(hexStr)) {
+        throw new Error(`Invalid hex-encoded message: contains non-hex characters`);
+      }
+      messageBuffer = Buffer.from(hexStr, 'hex');
+    } else {
+      messageBuffer = Buffer.from(message, 'utf8');
+    }
+
+    // Create a Schnorr signer instance
+    const schnorr = new Schnorr();
+
+    // Compute the public key from the private key
+    const publicKey = await schnorr.computePublicKey(secretKey);
+
+    // Sign the message
+    const signature = await schnorr.constructSignature(messageBuffer, secretKey);
+
+    return {
+      message,
+      signature: signature.toString(),
+      publicKey: publicKey.toString(),
+    };
+  }
+
+  /**
+   * Verify a Schnorr signature
+   * @param message - The message that was signed (string or hex-encoded bytes with 0x prefix)
+   * @param signatureStr - The signature to verify (hex string)
+   * @param publicKeyStr - The public key to verify against (hex string)
+   * @returns The verification result with message, signature, public key, and validity
+   */
+  static async verifySignature(
+    message: string,
+    signatureStr: string,
+    publicKeyStr: string
+  ): Promise<VerifiedSignature> {
+    // Validate and parse the signature
+    let signature: SchnorrSignature;
+    try {
+      signature = SchnorrSignature.fromString(signatureStr);
+    } catch (error: any) {
+      throw new Error(`Invalid signature: ${error.message}`);
+    }
+
+    // Validate and parse the public key
+    let publicKey: Point;
+    try {
+      publicKey = Point.fromString(publicKeyStr);
+    } catch (error: any) {
+      throw new Error(`Invalid public key: ${error.message}`);
+    }
+
+    // Convert the message to a buffer
+    // If message starts with 0x, treat it as hex-encoded bytes
+    // Otherwise, treat it as a UTF-8 string
+    let messageBuffer: Buffer;
+    if (message.startsWith('0x')) {
+      const hexStr = message.slice(2);
+      // Validate hex string
+      if (!/^[0-9a-fA-F]*$/.test(hexStr)) {
+        throw new Error(`Invalid hex-encoded message: contains non-hex characters`);
+      }
+      messageBuffer = Buffer.from(hexStr, 'hex');
+    } else {
+      messageBuffer = Buffer.from(message, 'utf8');
+    }
+
+    // Create a Schnorr verifier instance
+    const schnorr = new Schnorr();
+
+    // Verify the signature
+    const valid = await schnorr.verifySignature(messageBuffer, publicKey, signature);
+
+    return {
+      message,
+      signature: signatureStr,
+      publicKey: publicKeyStr,
+      valid,
     };
   }
 }
