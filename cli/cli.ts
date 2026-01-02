@@ -282,6 +282,36 @@ keyCmd
     }
   });
 
+keyCmd
+  .command('list')
+  .alias('ls')
+  .description('List all stored key aliases')
+  .action(async () => {
+    try {
+      const { WalletUtils } = await import('./utils/wallet.js');
+      const result = await WalletUtils.listKeys();
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Stored Key Aliases');
+        console.log('='.repeat(50));
+        if (result.aliases.length === 0) {
+          console.log('');
+          console.log('No keys stored');
+        } else {
+          console.log('');
+          for (const alias of result.aliases) {
+            console.log(`  ${alias}`);
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error(`Error listing keys: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 

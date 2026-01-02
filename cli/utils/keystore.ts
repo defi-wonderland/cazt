@@ -23,6 +23,9 @@ interface KeyStoreData {
 /**
  * KeyStore manages local storage of secret keys with aliases
  * Keys are stored in ~/.cazt/keys.json with proper permissions
+ *
+ * In test mode (NODE_ENV=test or CAZT_TEST_MODE=true), keys are stored
+ * in ~/.cazt/keys_test.json to prevent accidentally wiping real keys
  */
 export class KeyStore {
   private static readonly DEFAULT_DIR = path.join(os.homedir(), '.cazt');
@@ -62,6 +65,28 @@ export class KeyStore {
   }
 
   /**
+   * Determines if we're in test mode
+   */
+  private static isTestMode(): boolean {
+    return process.env.NODE_ENV === 'test' || process.env.CAZT_TEST_MODE === 'true';
+  }
+
+  /**
+   * Gets the CAZT directory (always ~/.cazt)
+   */
+  private static getCaztDir(): string {
+    return path.join(os.homedir(), '.cazt');
+  }
+
+  /**
+   * Gets the keys file path based on test mode
+   */
+  private static getKeysFile(): string {
+    const filename = KeyStore.isTestMode() ? 'keys_test.json' : 'keys.json';
+    return path.join(KeyStore.getCaztDir(), filename);
+  }
+
+  /**
    * Validates that an alias follows naming rules
    * - Alphanumeric, underscore, dash allowed
    * - Must start with letter or underscore
@@ -73,11 +98,11 @@ export class KeyStore {
   }
 
   /**
-   * Ensures the ~/.cazt directory exists with proper permissions
+   * Ensures the appropriate .cazt directory exists with proper permissions
    */
   private static async ensureDirectory(): Promise<void> {
     try {
-      await fs.mkdir(KeyStore.CAZT_DIR, { mode: 0o700, recursive: true });
+      await fs.mkdir(KeyStore.getCaztDir(), { mode: 0o700, recursive: true });
     } catch (error: any) {
       if (error.code !== 'EEXIST') {
         throw new Error(`Failed to create keystore directory: ${error.message}`);
@@ -92,7 +117,7 @@ export class KeyStore {
     await KeyStore.ensureDirectory();
 
     try {
-      const data = await fs.readFile(KeyStore.KEYS_FILE, 'utf-8');
+      const data = await fs.readFile(KeyStore.getKeysFile(), 'utf-8');
       const parsed = JSON.parse(data);
 
       // Validate structure
@@ -122,7 +147,7 @@ export class KeyStore {
     await KeyStore.ensureDirectory();
 
     const json = JSON.stringify(data, null, 2);
-    await fs.writeFile(KeyStore.KEYS_FILE, json, { mode: KeyStore.FILE_MODE });
+    await fs.writeFile(KeyStore.getKeysFile(), json, { mode: KeyStore.FILE_MODE });
   }
 
   /**
@@ -206,7 +231,7 @@ export class KeyStore {
    * Gets the keystore file path for display purposes
    */
   static getKeysFilePath(): string {
-    return KeyStore.KEYS_FILE;
+    return KeyStore.getKeysFile();
   }
 
   /**
