@@ -3,6 +3,7 @@
  */
 
 import { Fr } from '@aztec/foundation/fields';
+<<<<<<< HEAD
 import { deriveKeys } from '@aztec/stdlib/keys';
 import { randomBytes } from '@aztec/foundation/crypto';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
@@ -24,6 +25,9 @@ function passphraseToSecretKey(passphrase: string): Fr {
   const buffer = Buffer.from(padded, 'utf-8');
   return Fr.fromBufferReduce(buffer);
 }
+=======
+import { randomBytes } from '@aztec/foundation/crypto';
+>>>>>>> b4e6a73 (feat: cmd key generate)
 
 /**
  * Result type for key generation
@@ -34,6 +38,7 @@ export interface GeneratedKey {
 }
 
 /**
+<<<<<<< HEAD
  * Result type for derived keys
  */
 export interface DerivedKeys {
@@ -52,6 +57,8 @@ export interface DerivedKeys {
 }
 
 /**
+=======
+>>>>>>> b4e6a73 (feat: cmd key generate)
  * Wallet utilities for key operations
  */
 export class WalletUtils {
@@ -67,6 +74,7 @@ export class WalletUtils {
       warning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control associated accounts.',
     };
   }
+<<<<<<< HEAD
 
   /**
    * Derive keys from a secret key
@@ -129,4 +137,6 @@ export class WalletUtils {
       ...(derivedSecretKey && { secretKey: derivedSecretKey }),
     };
   }
+=======
+>>>>>>> b4e6a73 (feat: cmd key generate)
 }
