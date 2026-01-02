@@ -3,10 +3,10 @@
  */
 
 import { Fr } from '@aztec/foundation/fields';
-<<<<<<< HEAD
 import { deriveKeys } from '@aztec/stdlib/keys';
 import { randomBytes } from '@aztec/foundation/crypto';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
+import { KeyStore } from './keystore.js';
 
 /**
  * Check if a string looks like a hex field value or numeric string
@@ -25,9 +25,6 @@ function passphraseToSecretKey(passphrase: string): Fr {
   const buffer = Buffer.from(padded, 'utf-8');
   return Fr.fromBufferReduce(buffer);
 }
-=======
-import { randomBytes } from '@aztec/foundation/crypto';
->>>>>>> b4e6a73 (feat: cmd key generate)
 
 /**
  * Result type for key generation
@@ -38,7 +35,6 @@ export interface GeneratedKey {
 }
 
 /**
-<<<<<<< HEAD
  * Result type for derived keys
  */
 export interface DerivedKeys {
@@ -57,8 +53,18 @@ export interface DerivedKeys {
 }
 
 /**
-=======
->>>>>>> b4e6a73 (feat: cmd key generate)
+ * Result type for key import
+ */
+export interface ImportedKey {
+  alias: string;
+  secret: string;
+  address: string;
+  stored: boolean;
+  keystorePath: string;
+  warning: string;
+}
+
+/**
  * Wallet utilities for key operations
  */
 export class WalletUtils {
@@ -74,7 +80,6 @@ export class WalletUtils {
       warning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control associated accounts.',
     };
   }
-<<<<<<< HEAD
 
   /**
    * Derive keys from a secret key
@@ -137,6 +142,46 @@ export class WalletUtils {
       ...(derivedSecretKey && { secretKey: derivedSecretKey }),
     };
   }
-=======
->>>>>>> b4e6a73 (feat: cmd key generate)
+
+  /**
+   * Import a secret key with an alias for local storage
+   * @param secretKeyStr - Secret key as a string (hex or decimal)
+   * @param alias - Alias to store the key under
+   * @param force - Whether to overwrite existing alias
+   * @returns Information about the imported key
+   */
+  static async importKey(secretKeyStr: string, alias: string, force: boolean = false): Promise<ImportedKey> {
+    // Validate that the secret key is a valid field element
+    let secretKey: Fr;
+    try {
+      secretKey = Fr.fromString(secretKeyStr);
+    } catch (error: any) {
+      throw new Error(`Invalid secret key: ${error.message}`);
+    }
+
+    // Normalize the secret key to hex format
+    const normalizedSecret = secretKey.toString();
+
+    // Validate alias format
+    if (!KeyStore.isValidAlias(alias)) {
+      throw new Error(
+        `Invalid alias '${alias}'. Must start with letter/underscore, contain only alphanumeric/underscore/dash, and be 1-64 characters.`
+      );
+    }
+
+    // Derive the address for this key
+    const { address } = await this.deriveAddress(normalizedSecret);
+
+    // Store the key in the keystore
+    await KeyStore.save(alias, normalizedSecret, force);
+
+    return {
+      alias,
+      secret: normalizedSecret,
+      address,
+      stored: true,
+      keystorePath: KeyStore.getKeysFilePath(),
+      warning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
+    };
+  }
 }
