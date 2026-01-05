@@ -14,6 +14,7 @@ import {
   extractAddress,
   isValidDerivedAddressJson,
   DERIVE_ADDRESS_TEST_VECTORS,
+  parseJsonOutput,
 } from './utils.js';
 
 // Mock console methods to capture output
@@ -51,7 +52,7 @@ async function executeCommand(args: string[], expectError = false): Promise<stri
   const originalExit = process.exit;
   let exitCalled = false;
   let exitCode: number | undefined;
-
+  
   // Mock process.exit to prevent actual exit
   process.exit = ((code?: number) => {
     exitCalled = true;
@@ -60,9 +61,9 @@ async function executeCommand(args: string[], expectError = false): Promise<stri
       throw new Error(`Process exited with code ${code || 0}`);
     }
   }) as typeof process.exit;
-
+  
   process.argv = ['node', 'cli.js', ...args];
-
+  
   try {
     // Reset options to defaults before parsing to avoid state pollution
     // Commander.js retains options between parseAsync calls
@@ -475,8 +476,8 @@ describe('CLI Commands', () => {
           expect(secretKeysHeaderPos).toBeGreaterThan(0);
           expect(publicKeysHeaderPos).toBeGreaterThan(0);
           expect(secretKeysHeaderPos).toBeLessThan(publicKeysHeaderPos);
-        });
-      });
+    });
+  });
     });
 
     describe('derive-address subcommand', () => {
@@ -657,6 +658,102 @@ describe('CLI Commands', () => {
           expect(parsed).not.toBeNull();
           expect(parsed.address).toBeDefined();
           expect(isValidAztecAddress(parsed.address)).toBe(true);
+        });
+      });
+
+      // Tests with string passphrase
+      describe('with string passphrase', () => {
+        it('should derive address from a string passphrase using Poseidon2', async () => {
+          const output = await executeCommand(['key', 'derive-address', 'hello']);
+
+          const address = extractAddress(output);
+          expect(address).not.toBeNull();
+          expect(isValidAztecAddress(address!)).toBe(true);
+        });
+
+        it('should show derived secret key when using string passphrase', async () => {
+          const output = await executeCommand(['key', 'derive-address', 'hello']);
+
+          expect(output).toContain('Secret Key (derived from passphrase):');
+          expect(output).toMatch(/0x[0-9a-fA-F]+/);
+        });
+
+        it('should produce deterministic results for same passphrase', async () => {
+          const output1 = await executeCommand(['key', 'derive-address', 'mysecret']);
+          const output2 = await executeCommand(['key', 'derive-address', 'mysecret']);
+
+          const address1 = extractAddress(output1);
+          const address2 = extractAddress(output2);
+
+          expect(address1).toBe(address2);
+        });
+
+        it('should produce different addresses for different passphrases', async () => {
+          const output1 = await executeCommand(['key', 'derive-address', 'alice']);
+          const output2 = await executeCommand(['key', 'derive-address', 'bob']);
+
+          const address1 = extractAddress(output1);
+          const address2 = extractAddress(output2);
+
+          expect(address1).not.toBe(address2);
+        });
+
+        it('should pad short strings with # to 32 chars before hashing', async () => {
+          // "a" padded becomes "a###############################" (a + 31 #)
+          // "ab" padded becomes "ab##############################" (ab + 30 #)
+          // They should produce different results because they differ before padding
+          const output1 = await executeCommand(['key', 'derive-address', 'a']);
+          const output2 = await executeCommand(['key', 'derive-address', 'ab']);
+
+          const address1 = extractAddress(output1);
+          const address2 = extractAddress(output2);
+
+          expect(address1).not.toBe(address2);
+        });
+
+        it('should work with salt and string passphrase', async () => {
+          const output = await executeCommand(['key', 'derive-address', 'mysecret', '--salt', '1']);
+
+          const address = extractAddress(output);
+          expect(address).not.toBeNull();
+          expect(isValidAztecAddress(address!)).toBe(true);
+          expect(output).toContain('Salt:');
+        });
+
+        it('should derive different addresses with same passphrase but different salts', async () => {
+          const output1 = await executeCommand(['key', 'derive-address', 'mysecret', '--salt', '0']);
+          const output2 = await executeCommand(['key', 'derive-address', 'mysecret', '--salt', '1']);
+
+          const address1 = extractAddress(output1);
+          const address2 = extractAddress(output2);
+
+          expect(address1).not.toBe(address2);
+        });
+
+        it('should not show derived secret key for hex secrets', async () => {
+          const output = await executeCommand(['key', 'derive-address', testSecret]);
+
+          expect(output).not.toContain('Secret Key (derived from passphrase):');
+        });
+
+        it('should include secretKey in JSON output when using passphrase', async () => {
+          const output = await executeCommand(['key', 'derive-address', 'hello', '--json']);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(parsed.address).toBeDefined();
+          expect(parsed.secretKey).toBeDefined();
+          expect(isValidAztecAddress(parsed.address)).toBe(true);
+          expect(parsed.secretKey.startsWith('0x')).toBe(true);
+        });
+
+        it('should not include secretKey in JSON output for hex secrets', async () => {
+          const output = await executeCommand(['key', 'derive-address', testSecret, '--json']);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(parsed.address).toBeDefined();
+          expect(parsed.secretKey).toBeUndefined();
         });
       });
     });

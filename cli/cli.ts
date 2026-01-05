@@ -192,7 +192,7 @@ keyCmd
 
 keyCmd
   .command('derive-address <secret>')
-  .description('Compute account address from secret key')
+  .description('Compute account address from secret key or passphrase')
   .option('--salt <salt>', 'Optional salt for address derivation')
   .action(async (secret: string, options: { salt?: string }) => {
     try {
@@ -206,6 +206,10 @@ keyCmd
         console.log('='.repeat(50));
         console.log('');
         console.log(`Address: ${result.address}`);
+        if (result.secretKey) {
+          console.log('');
+          console.log(`Secret Key (derived from passphrase): ${result.secretKey}`);
+        }
         if (options.salt) {
           console.log('');
           console.log(`Salt: ${options.salt}`);
