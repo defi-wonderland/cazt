@@ -1,4 +1,4 @@
-// Export utilities and types for library use
-export { RpcClient, parseJsonOrFile } from './utils/rpc.js';
-export { AztecUtilities } from './utils/index.js';
+// CLI library exports
+// Utilities will be added by feature PRs
 
+export { program } from './cli.js';
