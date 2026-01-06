@@ -17,13 +17,15 @@ function isHexOrNumericString(str: string): boolean {
 
 /**
  * Convert a string passphrase to a secret key
- * Pads the string to 32 characters with '#' and converts to field element
+ * Pads the string to 32 characters with '#' and hashes with Poseidon2
  */
-function passphraseToSecretKey(passphrase: string): Fr {
+async function passphraseToSecretKey(passphrase: string): Promise<Fr> {
   // Pad with '#' to 32 characters (right-pad)
   const padded = passphrase.padEnd(32, '#');
   const buffer = Buffer.from(padded, 'utf-8');
-  return Fr.fromBufferReduce(buffer);
+  const fieldElement = Fr.fromBufferReduce(buffer);
+  // Hash with Poseidon2 for proper key derivation
+  return await poseidon2Hash([fieldElement]);
 }
 
 /**
@@ -185,7 +187,7 @@ export class WalletUtils {
 
     // If it's not a hex/numeric string, treat it as a passphrase
     if (!isHexOrNumericString(secretKeyStr)) {
-      secretKey = passphraseToSecretKey(secretKeyStr);
+      secretKey = await passphraseToSecretKey(secretKeyStr);
       derivedSecretKey = secretKey.toString();
     } else {
       secretKey = Fr.fromString(secretKeyStr);
@@ -275,16 +277,24 @@ export class WalletUtils {
   /**
    * Sign a message using Schnorr signature
    * @param message - The message to sign (string or hex-encoded bytes with 0x prefix)
-   * @param secretKeyStr - Secret key as a string (hex or decimal)
-   * @returns The signed message with signature and public key
+   * @param secretKeyStr - Secret key as a string (hex or decimal) or passphrase
+   * @returns The signed message with signature, public key, and optionally the derived secret key
    */
-  static async signMessage(message: string, secretKeyStr: string): Promise<SignedMessage> {
+  static async signMessage(message: string, secretKeyStr: string): Promise<SignedMessage & { derivedSecretKey?: string }> {
     // Validate and convert the secret key to Fr first
     let secretKeyFr: Fr;
-    try {
-      secretKeyFr = Fr.fromString(secretKeyStr);
-    } catch (error: any) {
-      throw new Error(`Invalid secret key: ${error.message}`);
+    let derivedSecretKey: string | undefined;
+    
+    // If it's not a hex/numeric string, treat it as a passphrase
+    if (!isHexOrNumericString(secretKeyStr)) {
+      secretKeyFr = await passphraseToSecretKey(secretKeyStr);
+      derivedSecretKey = secretKeyFr.toString();
+    } else {
+      try {
+        secretKeyFr = Fr.fromString(secretKeyStr);
+      } catch (error: any) {
+        throw new Error(`Invalid secret key: ${error.message}`);
+      }
     }
 
     // Convert Fr to Fq (GrumpkinScalar) for Schnorr operations
@@ -319,6 +329,7 @@ export class WalletUtils {
       message,
       signature: signature.toString(),
       publicKey: publicKey.toString(),
+      ...(derivedSecretKey && { derivedSecretKey }),
     };
   }
 

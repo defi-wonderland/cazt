@@ -313,13 +313,14 @@ keyCmd
   });
 
 keyCmd
-  .command('sign <message>')
+  .command('sign <message> [secret]')
   .description('Sign a message with Schnorr signature (strings or hex bytes with 0x prefix)')
-  .requiredOption('--secret <key>', 'Secret key to sign with (hex or decimal)')
-  .action(async (message: string, options: { secret: string }) => {
+  .option('--alias <name>', 'Alias of the secret key to use from keystore')
+  .action(async (message: string, secret: string | undefined, options: { alias?: string }) => {
     try {
-      const { WalletUtils } = await import('./utils/wallet.js');
-      const result = await WalletUtils.signMessage(message, options.secret);
+      const { WalletUtils, resolveSecret } = await import('./utils/wallet.js');
+      const resolvedSecret = await resolveSecret(secret, options.alias);
+      const result = await WalletUtils.signMessage(message, resolvedSecret);
 
       if (program.opts().json) {
         console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
@@ -329,6 +330,10 @@ keyCmd
         console.log('');
         console.log(`Message: ${result.message}`);
         console.log('');
+        if (result.derivedSecretKey) {
+          console.log(`Secret Key (derived from passphrase): ${result.derivedSecretKey}`);
+          console.log('');
+        }
         console.log(`Signature: ${result.signature}`);
         console.log('');
         console.log(`Public Key: ${result.publicKey}`);

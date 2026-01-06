@@ -1672,7 +1672,7 @@ describe('CLI Commands', () => {
         const message = 'hello';
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
-        const output = await executeCommand(['key', 'sign', message, '--secret', secret]);
+        const output = await executeCommand(['key', 'sign', message, secret]);
 
         // Check for expected output structure
         expect(output).toMatch(SIGN_MESSAGE_TEST_VECTORS.patterns.humanReadable.header);
@@ -1697,8 +1697,8 @@ describe('CLI Commands', () => {
         const message = 'test message';
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
 
-        const output1 = await executeCommand(['key', 'sign', message, '--secret', secret]);
-        const output2 = await executeCommand(['key', 'sign', message, '--secret', secret]);
+        const output1 = await executeCommand(['key', 'sign', message, secret]);
+        const output2 = await executeCommand(['key', 'sign', message, secret]);
 
         const signature1 = extractSignature(output1);
         const signature2 = extractSignature(output2);
@@ -1723,8 +1723,8 @@ describe('CLI Commands', () => {
         const message2 = 'second message';
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
-        const output1 = await executeCommand(['key', 'sign', message1, '--secret', secret]);
-        const output2 = await executeCommand(['key', 'sign', message2, '--secret', secret]);
+        const output1 = await executeCommand(['key', 'sign', message1, secret]);
+        const output2 = await executeCommand(['key', 'sign', message2, secret]);
 
         const signature1 = extractSignature(output1);
         const signature2 = extractSignature(output2);
@@ -1738,8 +1738,8 @@ describe('CLI Commands', () => {
         const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
         const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
 
-        const output1 = await executeCommand(['key', 'sign', message, '--secret', secret1]);
-        const output2 = await executeCommand(['key', 'sign', message, '--secret', secret2]);
+        const output1 = await executeCommand(['key', 'sign', message, secret1]);
+        const output2 = await executeCommand(['key', 'sign', message, secret2]);
 
         const signature1 = extractSignature(output1);
         const signature2 = extractSignature(output2);
@@ -1755,7 +1755,7 @@ describe('CLI Commands', () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
         for (const testCase of SIGN_MESSAGE_TEST_VECTORS.testMessages) {
-          const output = await executeCommand(['key', 'sign', testCase.message, '--secret', secret]);
+          const output = await executeCommand(['key', 'sign', testCase.message, secret]);
 
           const extractedMessage = extractMessage(output);
           const signature = extractSignature(output);
@@ -1773,7 +1773,7 @@ describe('CLI Commands', () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
         for (const testCase of SIGN_MESSAGE_TEST_VECTORS.testHexMessages) {
-          const output = await executeCommand(['key', 'sign', testCase.message, '--secret', secret]);
+          const output = await executeCommand(['key', 'sign', testCase.message, secret]);
 
           const extractedMessage = extractMessage(output);
           const signature = extractSignature(output);
@@ -1792,8 +1792,8 @@ describe('CLI Commands', () => {
         const stringMessage = 'hello';
         const hexMessage = '0x68656c6c6f'; // "hello" in hex
 
-        const output1 = await executeCommand(['key', 'sign', stringMessage, '--secret', secret]);
-        const output2 = await executeCommand(['key', 'sign', hexMessage, '--secret', secret]);
+        const output1 = await executeCommand(['key', 'sign', stringMessage, secret]);
+        const output2 = await executeCommand(['key', 'sign', hexMessage, secret]);
 
         const signature1 = extractSignature(output1);
         const signature2 = extractSignature(output2);
@@ -1816,7 +1816,7 @@ describe('CLI Commands', () => {
         const message = 'test message';
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
-        const output = await executeCommand(['key', 'sign', message, '--secret', secret, '--json']);
+        const output = await executeCommand(['key', 'sign', message, secret, '--json']);
 
         // Should be valid JSON
         const parsed = parseJsonOutput(output);
@@ -1835,7 +1835,7 @@ describe('CLI Commands', () => {
         const message = 'test';
 
         for (const testCase of SIGN_MESSAGE_TEST_VECTORS.testSecrets) {
-          const output = await executeCommand(['key', 'sign', message, '--secret', testCase.secret]);
+          const output = await executeCommand(['key', 'sign', message, testCase.secret]);
 
           const signature = extractSignature(output);
           const publicKey = extractPublicKey(output);
@@ -1847,20 +1847,26 @@ describe('CLI Commands', () => {
         }
       });
 
-      it('should fail with invalid secret key', async () => {
+      it('should treat non-hex strings as passphrases', async () => {
         const message = 'test';
-        const invalidSecret = 'not-a-valid-key';
+        const passphrase = 'my-secret-passphrase';
 
-        const output = await executeCommand(['key', 'sign', message, '--secret', invalidSecret], true);
+        const output = await executeCommand(['key', 'sign', message, passphrase]);
 
-        expect(output).toMatch(/Invalid secret key/i);
+        // Passphrase should be treated as valid and produce a signature
+        const signature = extractSignature(output);
+        expect(signature).toBeDefined();
+        expect(signature).toMatch(/^0x[0-9a-f]+$/i);
+
+        // Should show the derived secret key
+        expect(output).toContain('Secret Key (derived from passphrase)');
       });
 
       it('should fail with invalid hex message', async () => {
         const message = '0xZZZZ'; // Invalid hex
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
-        const output = await executeCommand(['key', 'sign', message, '--secret', secret], true);
+        const output = await executeCommand(['key', 'sign', message, secret], true);
 
         expect(output).toMatch(/Invalid hex-encoded message/i);
       });
@@ -1879,8 +1885,8 @@ describe('CLI Commands', () => {
         const message1 = 'first';
         const message2 = 'second';
 
-        const output1 = await executeCommand(['key', 'sign', message1, '--secret', secret]);
-        const output2 = await executeCommand(['key', 'sign', message2, '--secret', secret]);
+        const output1 = await executeCommand(['key', 'sign', message1, secret]);
+        const output2 = await executeCommand(['key', 'sign', message2, secret]);
 
         const publicKey1 = extractPublicKey(output1);
         const publicKey2 = extractPublicKey(output2);
@@ -1893,7 +1899,7 @@ describe('CLI Commands', () => {
         const message = '';
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
-        const output = await executeCommand(['key', 'sign', message, '--secret', secret]);
+        const output = await executeCommand(['key', 'sign', message, secret]);
 
         const signature = extractSignature(output);
         const publicKey = extractPublicKey(output);
@@ -1908,7 +1914,7 @@ describe('CLI Commands', () => {
         const message = 'test';
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
-        const output = await executeCommand(['key', 'sign', message, '--secret', secret]);
+        const output = await executeCommand(['key', 'sign', message, secret]);
 
         // Human-readable output should not contain JSON-like formatting
         expect(output).not.toMatch(/"message"/);
@@ -1929,7 +1935,7 @@ describe('CLI Commands', () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
         // First sign a message to get a valid signature
-        const signOutput = await executeCommand(['key', 'sign', message, '--secret', secret]);
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
         const signature = extractSignature(signOutput);
         const publicKey = extractPublicKey(signOutput);
 
@@ -1964,7 +1970,7 @@ describe('CLI Commands', () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
         // Sign with one message
-        const signOutput = await executeCommand(['key', 'sign', message, '--secret', secret]);
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
         const signature = extractSignature(signOutput);
         const publicKey = extractPublicKey(signOutput);
 
@@ -1985,11 +1991,11 @@ describe('CLI Commands', () => {
         const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
 
         // Sign with secret1
-        const signOutput = await executeCommand(['key', 'sign', message, '--secret', secret1]);
+        const signOutput = await executeCommand(['key', 'sign', message, secret1]);
         const signature = extractSignature(signOutput);
 
         // Get public key from secret2
-        const signOutput2 = await executeCommand(['key', 'sign', 'test', '--secret', secret2]);
+        const signOutput2 = await executeCommand(['key', 'sign', 'test', secret2]);
         const wrongPublicKey = extractPublicKey(signOutput2);
 
         // Verify with wrong public key
@@ -2008,7 +2014,7 @@ describe('CLI Commands', () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
         // Sign a message
-        const signOutput = await executeCommand(['key', 'sign', message, '--secret', secret]);
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
         const signature = extractSignature(signOutput);
         const publicKey = extractPublicKey(signOutput);
 
@@ -2030,7 +2036,7 @@ describe('CLI Commands', () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
         // Sign hex message
-        const signOutput = await executeCommand(['key', 'sign', hexMessage, '--secret', secret]);
+        const signOutput = await executeCommand(['key', 'sign', hexMessage, secret]);
         const signature = extractSignature(signOutput);
         const publicKey = extractPublicKey(signOutput);
 
@@ -2054,7 +2060,7 @@ describe('CLI Commands', () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
         // Sign empty message
-        const signOutput = await executeCommand(['key', 'sign', message, '--secret', secret]);
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
         const signature = extractSignature(signOutput);
         const publicKey = extractPublicKey(signOutput);
 
@@ -2078,7 +2084,7 @@ describe('CLI Commands', () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
         // Sign a message
-        const signOutput = await executeCommand(['key', 'sign', message, '--secret', secret]);
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
         const signature = extractSignature(signOutput);
         const publicKey = extractPublicKey(signOutput);
 
@@ -2155,7 +2161,7 @@ describe('CLI Commands', () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
         // Sign string message
-        const signOutput1 = await executeCommand(['key', 'sign', stringMessage, '--secret', secret]);
+        const signOutput1 = await executeCommand(['key', 'sign', stringMessage, secret]);
         const signature1 = extractSignature(signOutput1);
         const publicKey1 = extractPublicKey(signOutput1);
 
@@ -2174,7 +2180,7 @@ describe('CLI Commands', () => {
         expect(valid1).toBe(true);
 
         // Sign hex message
-        const signOutput2 = await executeCommand(['key', 'sign', hexMessage, '--secret', secret]);
+        const signOutput2 = await executeCommand(['key', 'sign', hexMessage, secret]);
         const signature2 = extractSignature(signOutput2);
         const publicKey2 = extractPublicKey(signOutput2);
 
@@ -2198,7 +2204,7 @@ describe('CLI Commands', () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
 
         // Sign and verify
-        const signOutput = await executeCommand(['key', 'sign', message, '--secret', secret]);
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
         const signature = extractSignature(signOutput);
         const publicKey = extractPublicKey(signOutput);
 
