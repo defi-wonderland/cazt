@@ -820,3 +820,258 @@ export const VERIFY_SIGNATURE_TEST_VECTORS = {
     },
   },
 };
+
+/**
+ * Test vectors for encrypted keystore operations
+ */
+export const ENCRYPTED_KEYSTORE_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    create: {
+      header: /Created Encrypted Keystore/,
+      separator: /={50}/,
+      nameLabel: /Name:/,
+      pathLabel: /Path:/,
+      uuidLabel: /UUID:/,
+      cipherLabel: /Cipher:/,
+      kdfLabel: /KDF:/,
+      warningLabel: /WARNING:/,
+      uuidValue: /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i,
+    },
+    unlock: {
+      header: /Unlocked Keystore/,
+      separator: /={50}/,
+      uuidLabel: /UUID:/,
+      secretLabel: /Secret:/,
+      warningLabel: /WARNING:/,
+      secretValue: /0x[0-9a-f]+/i,
+    },
+    inspect: {
+      header: /Keystore Metadata/,
+      separator: /={50}/,
+      nameLabel: /Name:/,
+      pathLabel: /Path:/,
+      uuidLabel: /UUID:/,
+      cipherLabel: /Cipher:/,
+      kdfLabel: /KDF:/,
+    },
+    list: {
+      header: /Keystores/,
+      separator: /={50}/,
+      directoryLabel: /Directory:/,
+      noKeystores: /No keystores found/,
+    },
+    json: {
+      hasName: /"name"\s*:/,
+      hasPath: /"path"\s*:/,
+      hasId: /"id"\s*:/,
+      hasCipher: /"cipher"\s*:/,
+      hasKdf: /"kdf"\s*:/,
+      hasSecret: /"secret"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+
+  // Expected encryption parameters
+  expectedParams: {
+    cipher: 'aes-128-ctr',
+    kdf: 'scrypt',
+    version: 3,
+  },
+
+  // Go-ethereum test vector for compatibility verification
+  // From: https://lsongnotes.wordpress.com/2018/04/30/manually-decrypting-ethereum-keystore-file/
+  goEthereumTestVector: {
+    keystore: {
+      address: '7e5f4552091a69125d5dfcb7b8c2659029395bdf',
+      crypto: {
+        cipher: 'aes-128-ctr',
+        ciphertext: 'f97975cb858242372a7c910de23976be4f545ad6b4d6ddb86e54b7d9b3b1c6a1',
+        cipherparams: {
+          iv: '7fa01f1d0d6a7117382632028cb0c323',
+        },
+        kdf: 'scrypt',
+        kdfparams: {
+          dklen: 32,
+          n: 262144,
+          p: 1,
+          r: 8,
+          salt: '859c5d345ee58dfca293950c540016af3a889d0dacb00b8eff2ac2b150f0b07e',
+        },
+        mac: '31ccb67e48aba5d64bf727a5c6589fd5857021540d25d12df31323f10ae2bf97',
+      },
+      id: 'dc74bc44-784b-4293-b1c7-b91e9fd7d6cc',
+      version: 3,
+    },
+    password: 'a',
+    expectedSecret: '0x0000000000000000000000000000000000000000000000000000000000000001',
+  },
+
+  // Expected warning text
+  warnings: {
+    create: 'Remember your password! It cannot be recovered.',
+    unlock: 'Handle this secret key carefully. Anyone with access can control associated accounts.',
+  },
+
+  // Test secret keys
+  testSecrets: [
+    {
+      secret: '0x0000000000000000000000000000000000000000000000000000000000000001',
+      description: 'secret key = 1',
+    },
+    {
+      secret: '0x0000000000000000000000000000000000000000000000000000000000000042',
+      description: 'secret key = 0x42',
+    },
+    {
+      secret: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+      description: 'typical hex secret',
+    },
+  ],
+
+  // Test passwords
+  testPasswords: [
+    { password: 'password123', description: 'simple password' },
+    { password: 'P@ssw0rd!Complex', description: 'complex password' },
+    { password: 'a', description: 'single character' },
+    { password: ' ', description: 'single space' },
+    { password: 'password with spaces', description: 'password with spaces' },
+  ],
+};
+
+/**
+ * Validates that a string is a valid UUID v4
+ * @param uuid - The string to validate
+ * @returns true if valid UUID v4
+ */
+export function isValidUuidV4(uuid: string): boolean {
+  const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidV4Pattern.test(uuid);
+}
+
+/**
+ * Extracts the UUID from human-readable keystore CLI output
+ * @param output - The CLI output string
+ * @returns The extracted UUID or null if not found
+ */
+export function extractKeystoreUuid(output: string): string | null {
+  const match = output.match(/UUID:\s*([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Extracts the file path from human-readable keystore CLI output
+ * @param output - The CLI output string
+ * @returns The extracted file path or null if not found
+ */
+export function extractKeystoreFile(output: string): string | null {
+  const match = output.match(/File:\s*(.+?)(?:\n|$)/);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Extracts the cipher from human-readable keystore CLI output
+ * @param output - The CLI output string
+ * @returns The extracted cipher or null if not found
+ */
+export function extractKeystoreCipher(output: string): string | null {
+  const match = output.match(/Cipher:\s*(.+?)(?:\n|$)/);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Extracts the KDF from human-readable keystore CLI output
+ * @param output - The CLI output string
+ * @returns The extracted KDF or null if not found
+ */
+export function extractKeystoreKdf(output: string): string | null {
+  const match = output.match(/KDF:\s*(.+?)(?:\n|$)/);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Extracts the secret from human-readable unlock CLI output
+ * @param output - The CLI output string
+ * @returns The extracted secret or null if not found
+ */
+export function extractUnlockedSecret(output: string): string | null {
+  const match = output.match(/Secret:\s*(0x[0-9a-f]+)/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Validates the structure of a keystore create JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidKeystoreCreateJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.name === 'string' &&
+    typeof obj.path === 'string' &&
+    typeof obj.id === 'string' &&
+    typeof obj.cipher === 'string' &&
+    typeof obj.kdf === 'string' &&
+    isValidUuidV4(obj.id)
+  );
+}
+
+/**
+ * Validates the structure of a keystore unlock JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidKeystoreUnlockJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.secret === 'string' &&
+    typeof obj.id === 'string' &&
+    isValidSecretKey(obj.secret) &&
+    isValidUuidV4(obj.id)
+  );
+}
+
+/**
+ * Validates the structure of a keystore inspect JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidKeystoreInspectJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.name === 'string' &&
+    typeof obj.path === 'string' &&
+    typeof obj.id === 'string' &&
+    typeof obj.cipher === 'string' &&
+    typeof obj.kdf === 'string' &&
+    isValidUuidV4(obj.id)
+  );
+}
+
+/**
+ * Validates a keystore file JSON structure
+ * @param obj - The parsed keystore file content
+ * @returns true if valid keystore file structure
+ */
+export function isValidKeystoreFile(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    obj.version === 3 &&
+    typeof obj.id === 'string' &&
+    isValidUuidV4(obj.id) &&
+    obj.crypto?.cipher === 'aes-128-ctr' &&
+    obj.crypto?.kdf === 'scrypt' &&
+    typeof obj.crypto?.ciphertext === 'string' &&
+    typeof obj.crypto?.mac === 'string' &&
+    typeof obj.crypto?.cipherparams?.iv === 'string' &&
+    typeof obj.crypto?.kdfparams?.salt === 'string' &&
+    typeof obj.crypto?.kdfparams?.n === 'number' &&
+    typeof obj.crypto?.kdfparams?.r === 'number' &&
+    typeof obj.crypto?.kdfparams?.p === 'number' &&
+    typeof obj.crypto?.kdfparams?.dklen === 'number'
+  );
+}

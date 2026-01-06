@@ -31,6 +31,17 @@ import {
   extractValid,
   isValidVerifiedSignatureJson,
   VERIFY_SIGNATURE_TEST_VECTORS,
+  ENCRYPTED_KEYSTORE_TEST_VECTORS,
+  isValidUuidV4,
+  extractKeystoreUuid,
+  extractKeystoreFile,
+  extractKeystoreCipher,
+  extractKeystoreKdf,
+  extractUnlockedSecret,
+  isValidKeystoreCreateJson,
+  isValidKeystoreUnlockJson,
+  isValidKeystoreInspectJson,
+  isValidKeystoreFile,
 } from './utils.js';
 import { KeyStore } from '../cli/utils/keystore.js';
 import * as os from 'os';
@@ -2227,6 +2238,769 @@ describe('CLI Commands', () => {
         // But should contain the validation result
         const valid = extractValid(verifyOutput);
         expect(valid).not.toBeNull();
+      });
+    });
+
+    describe('keystore command', () => {
+      // Directory for encrypted keystore test files
+      const KEYSTORE_TEST_DIR = path.join(os.tmpdir(), '.cazt-encrypted-keystore-test');
+      let testFileCounter = 0;
+
+      // Cleanup before and after tests
+      beforeAll(async () => {
+        try {
+          await fs.rm(KEYSTORE_TEST_DIR, { recursive: true, force: true });
+        } catch {
+          // Ignore if doesn't exist
+        }
+        await fs.mkdir(KEYSTORE_TEST_DIR, { recursive: true });
+      });
+
+      afterAll(async () => {
+        try {
+          await fs.rm(KEYSTORE_TEST_DIR, { recursive: true, force: true });
+        } catch {
+          // Ignore cleanup errors
+        }
+      });
+
+      // Helper to generate unique test file path
+      function getTestFilePath(): string {
+        testFileCounter++;
+        return path.join(KEYSTORE_TEST_DIR, `keystore-${testFileCounter}.json`);
+      }
+
+      describe('create subcommand', () => {
+        it('should create an encrypted keystore file with human-readable output', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword123';
+
+          const output = await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          // Check for expected output structure
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.header);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.separator);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.nameLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.pathLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.uuidLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.cipherLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.kdfLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.warningLabel);
+
+          // Check for valid UUID
+          const uuid = extractKeystoreUuid(output);
+          expect(uuid).not.toBeNull();
+          expect(isValidUuidV4(uuid!)).toBe(true);
+
+          // Check encryption parameters
+          const cipher = extractKeystoreCipher(output);
+          const kdf = extractKeystoreKdf(output);
+          expect(cipher).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.cipher);
+          expect(kdf).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.kdf);
+        });
+
+        it('should create a valid keystore file on disk', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword123';
+
+          await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          // Verify file exists
+          const exists = await fs.access(filePath).then(() => true).catch(() => false);
+          expect(exists).toBe(true);
+
+          // Verify file content is valid keystore format
+          const content = await fs.readFile(filePath, 'utf-8');
+          const keystoreData = JSON.parse(content);
+          expect(isValidKeystoreFile(keystoreData)).toBe(true);
+        });
+
+        it('should output JSON when --json flag is provided', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
+          const password = 'testpassword';
+
+          const output = await executeCommand([
+            '--json',
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(isValidKeystoreCreateJson(parsed)).toBe(true);
+          expect(parsed.cipher).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.cipher);
+          expect(parsed.kdf).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.kdf);
+        });
+
+        it('should work with different secret keys', async () => {
+          for (const testCase of ENCRYPTED_KEYSTORE_TEST_VECTORS.testSecrets) {
+            const filePath = getTestFilePath();
+            const password = 'testpassword';
+
+            const output = await executeCommand([
+              '--json',
+              'key',
+              'keystore',
+              'create',
+              filePath,
+              '--secret',
+              testCase.secret,
+              '--password',
+              password,
+            ]);
+
+            const parsed = parseJsonOutput(output);
+            expect(parsed).not.toBeNull();
+            expect(isValidKeystoreCreateJson(parsed)).toBe(true);
+          }
+        });
+
+        it('should work with different passwords', async () => {
+          for (const testCase of ENCRYPTED_KEYSTORE_TEST_VECTORS.testPasswords) {
+            const filePath = getTestFilePath();
+            const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+            const output = await executeCommand([
+              '--json',
+              'key',
+              'keystore',
+              'create',
+              filePath,
+              '--secret',
+              secret,
+              '--password',
+              testCase.password,
+            ]);
+
+            const parsed = parseJsonOutput(output);
+            expect(parsed).not.toBeNull();
+            expect(isValidKeystoreCreateJson(parsed)).toBe(true);
+          }
+        });
+
+        it('should fail with invalid secret key', async () => {
+          const filePath = getTestFilePath();
+          const invalidSecret = 'not-a-valid-key';
+          const password = 'testpassword';
+
+          const output = await executeCommand(
+            [
+              'key',
+              'keystore',
+              'create',
+              filePath,
+              '--secret',
+              invalidSecret,
+              '--password',
+              password,
+            ],
+            true
+          );
+
+          expect(output).toMatch(/Invalid secret key/i);
+        });
+
+        it('should generate unique UUIDs for each keystore', async () => {
+          const uuids: string[] = [];
+
+          for (let i = 0; i < 3; i++) {
+            const filePath = getTestFilePath();
+            const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+            const password = 'testpassword';
+
+            const output = await executeCommand([
+              'key',
+              'keystore',
+              'create',
+              filePath,
+              '--secret',
+              secret,
+              '--password',
+              password,
+            ]);
+
+            const uuid = extractKeystoreUuid(output);
+            expect(uuid).not.toBeNull();
+            uuids.push(uuid!);
+          }
+
+          // All UUIDs should be unique
+          const uniqueUuids = new Set(uuids);
+          expect(uniqueUuids.size).toBe(uuids.length);
+        });
+
+        it('should create different ciphertext for same key with different passwords', async () => {
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const ciphertexts: string[] = [];
+
+          for (const password of ['password1', 'password2', 'password3']) {
+            const filePath = getTestFilePath();
+
+            await executeCommand([
+              'key',
+              'keystore',
+              'create',
+              filePath,
+              '--secret',
+              secret,
+              '--password',
+              password,
+            ]);
+
+            const content = await fs.readFile(filePath, 'utf-8');
+            const keystoreData = JSON.parse(content);
+            ciphertexts.push(keystoreData.crypto.ciphertext);
+          }
+
+          // All ciphertexts should be different (different passwords = different derived keys)
+          const uniqueCiphertexts = new Set(ciphertexts);
+          expect(uniqueCiphertexts.size).toBe(ciphertexts.length);
+        });
+      });
+
+      describe('unlock subcommand', () => {
+        it('should decrypt a keystore file with correct password', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword123';
+
+          // Create keystore
+          await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          // Unlock keystore
+          const output = await executeCommand([
+            'key',
+            'keystore',
+            'unlock',
+            filePath,
+            '--password',
+            password,
+          ]);
+
+          // Check for expected output structure
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.unlock.header);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.unlock.separator);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.unlock.uuidLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.unlock.secretLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.unlock.warningLabel);
+
+          // Check that decrypted secret matches original
+          const decryptedSecret = extractUnlockedSecret(output);
+          expect(decryptedSecret).not.toBeNull();
+          expect(decryptedSecret?.toLowerCase()).toBe(secret.toLowerCase());
+        });
+
+        it('should output JSON when --json flag is provided', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
+          const password = 'testpassword';
+
+          // Create keystore
+          await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          // Unlock with JSON output
+          const output = await executeCommand([
+            '--json',
+            'key',
+            'keystore',
+            'unlock',
+            filePath,
+            '--password',
+            password,
+          ]);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(isValidKeystoreUnlockJson(parsed)).toBe(true);
+          expect(parsed.secret.toLowerCase()).toBe(secret.toLowerCase());
+        });
+
+        it('should fail with wrong password', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'correctpassword';
+          const wrongPassword = 'wrongpassword';
+
+          // Create keystore
+          await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          // Try to unlock with wrong password
+          const output = await executeCommand(
+            ['key', 'keystore', 'unlock', filePath, '--password', wrongPassword],
+            true
+          );
+
+          expect(output).toMatch(/Invalid password|MAC verification failed/i);
+        });
+
+        it('should fail with non-existent file', async () => {
+          const nonExistentPath = path.join(KEYSTORE_TEST_DIR, 'does-not-exist.json');
+
+          const output = await executeCommand(
+            ['key', 'keystore', 'unlock', nonExistentPath, '--password', 'password'],
+            true
+          );
+
+          expect(output).toMatch(/ENOENT|no such file|not found/i);
+        });
+
+        it('should round-trip all test secrets', async () => {
+          for (const testCase of ENCRYPTED_KEYSTORE_TEST_VECTORS.testSecrets) {
+            const filePath = getTestFilePath();
+            const password = 'testpassword';
+
+            // Create keystore
+            await executeCommand([
+              'key',
+              'keystore',
+              'create',
+              filePath,
+              '--secret',
+              testCase.secret,
+              '--password',
+              password,
+            ]);
+
+            // Unlock and verify
+            const output = await executeCommand([
+              '--json',
+              'key',
+              'keystore',
+              'unlock',
+              filePath,
+              '--password',
+              password,
+            ]);
+
+            const parsed = parseJsonOutput(output);
+            expect(parsed).not.toBeNull();
+            expect(parsed.secret.toLowerCase()).toBe(testCase.secret.toLowerCase());
+          }
+        });
+
+        it('should round-trip all test passwords', async () => {
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+          for (const testCase of ENCRYPTED_KEYSTORE_TEST_VECTORS.testPasswords) {
+            const filePath = getTestFilePath();
+
+            // Create keystore
+            await executeCommand([
+              'key',
+              'keystore',
+              'create',
+              filePath,
+              '--secret',
+              secret,
+              '--password',
+              testCase.password,
+            ]);
+
+            // Unlock and verify
+            const output = await executeCommand([
+              '--json',
+              'key',
+              'keystore',
+              'unlock',
+              filePath,
+              '--password',
+              testCase.password,
+            ]);
+
+            const parsed = parseJsonOutput(output);
+            expect(parsed).not.toBeNull();
+            expect(parsed.secret.toLowerCase()).toBe(secret.toLowerCase());
+          }
+        });
+
+        it('should preserve UUID across create and unlock', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword';
+
+          // Create keystore
+          const createOutput = await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+          const createUuid = extractKeystoreUuid(createOutput);
+
+          // Unlock keystore
+          const unlockOutput = await executeCommand([
+            'key',
+            'keystore',
+            'unlock',
+            filePath,
+            '--password',
+            password,
+          ]);
+          const unlockUuid = extractKeystoreUuid(unlockOutput);
+
+          expect(createUuid).toBe(unlockUuid);
+        });
+      });
+
+      describe('inspect subcommand', () => {
+        it('should display keystore metadata without decrypting', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword';
+
+          // Create keystore
+          await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          // Inspect keystore (no password needed)
+          const output = await executeCommand(['key', 'keystore', 'inspect', filePath]);
+
+          // Check for expected output structure
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.header);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.separator);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.nameLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.pathLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.uuidLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.cipherLabel);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.kdfLabel);
+
+          // Should NOT contain the secret
+          expect(output).not.toMatch(/Secret:/i);
+
+          // Check encryption parameters
+          const cipher = extractKeystoreCipher(output);
+          const kdf = extractKeystoreKdf(output);
+          expect(cipher).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.cipher);
+          expect(kdf).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.kdf);
+        });
+
+        it('should output JSON when --json flag is provided', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
+          const password = 'testpassword';
+
+          // Create keystore
+          await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          // Inspect with JSON output
+          const output = await executeCommand(['--json', 'key', 'keystore', 'inspect', filePath]);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(isValidKeystoreInspectJson(parsed)).toBe(true);
+          expect(parsed.cipher).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.cipher);
+          expect(parsed.kdf).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.kdf);
+
+          // Should NOT contain the secret
+          expect(parsed.secret).toBeUndefined();
+        });
+
+        it('should fail with non-existent file', async () => {
+          const nonExistentPath = path.join(KEYSTORE_TEST_DIR, 'does-not-exist.json');
+
+          const output = await executeCommand(
+            ['key', 'keystore', 'inspect', nonExistentPath],
+            true
+          );
+
+          expect(output).toMatch(/ENOENT|no such file|not found/i);
+        });
+
+        it('should fail with invalid JSON file', async () => {
+          const invalidFilePath = path.join(KEYSTORE_TEST_DIR, 'invalid.json');
+          await fs.writeFile(invalidFilePath, 'not valid json');
+
+          const output = await executeCommand(
+            ['key', 'keystore', 'inspect', invalidFilePath],
+            true
+          );
+
+          expect(output).toMatch(/Invalid keystore|not valid JSON/i);
+        });
+
+        it('should preserve UUID from create', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword';
+
+          // Create keystore
+          const createOutput = await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+          const createUuid = extractKeystoreUuid(createOutput);
+
+          // Inspect keystore
+          const inspectOutput = await executeCommand(['key', 'keystore', 'inspect', filePath]);
+          const inspectUuid = extractKeystoreUuid(inspectOutput);
+
+          expect(createUuid).toBe(inspectUuid);
+        });
+      });
+
+      describe('Ethereum compatibility', () => {
+        it('should decrypt go-ethereum keystore test vector', async () => {
+          // Write the go-ethereum test vector to a file
+          const filePath = path.join(KEYSTORE_TEST_DIR, 'go-ethereum-test.json');
+          const testVector = ENCRYPTED_KEYSTORE_TEST_VECTORS.goEthereumTestVector;
+
+          await fs.writeFile(filePath, JSON.stringify(testVector.keystore, null, 2));
+
+          // Decrypt using our implementation
+          const output = await executeCommand([
+            '--json',
+            'key',
+            'keystore',
+            'unlock',
+            filePath,
+            '--password',
+            testVector.password,
+          ]);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(parsed.secret.toLowerCase()).toBe(testVector.expectedSecret.toLowerCase());
+          expect(parsed.id).toBe(testVector.keystore.id);
+        });
+
+        it('should use aes-128-ctr cipher (Ethereum standard)', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword';
+
+          await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          // Read the file and verify cipher
+          const content = await fs.readFile(filePath, 'utf-8');
+          const keystoreData = JSON.parse(content);
+
+          expect(keystoreData.crypto.cipher).toBe('aes-128-ctr');
+          expect(keystoreData.crypto.kdf).toBe('scrypt');
+          expect(keystoreData.version).toBe(3);
+        });
+
+        it('should use standard scrypt parameters', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword';
+
+          await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          // Read the file and verify scrypt parameters
+          const content = await fs.readFile(filePath, 'utf-8');
+          const keystoreData = JSON.parse(content);
+
+          // Standard Ethereum scrypt parameters
+          expect(keystoreData.crypto.kdfparams.n).toBe(262144); // 2^18
+          expect(keystoreData.crypto.kdfparams.r).toBe(8);
+          expect(keystoreData.crypto.kdfparams.p).toBe(1);
+          expect(keystoreData.crypto.kdfparams.dklen).toBe(32);
+        });
+
+        it('should produce 32-byte ciphertext for 32-byte secret (no padding)', async () => {
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword';
+
+          await executeCommand([
+            'key',
+            'keystore',
+            'create',
+            filePath,
+            '--secret',
+            secret,
+            '--password',
+            password,
+          ]);
+
+          // Read the file and verify ciphertext length
+          const content = await fs.readFile(filePath, 'utf-8');
+          const keystoreData = JSON.parse(content);
+
+          // AES-128-CTR is a stream cipher, so ciphertext length = plaintext length
+          // 32 bytes = 64 hex characters
+          expect(keystoreData.crypto.ciphertext.length).toBe(64);
+        });
+      });
+
+      describe('list subcommand', () => {
+        it('should list keystores in a directory', async () => {
+          // Create a couple of keystores first
+          const filePath1 = getTestFilePath();
+          const filePath2 = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword';
+
+          await executeCommand([
+            'key', 'keystore', 'create', filePath1,
+            '--secret', secret,
+            '--password', password,
+          ]);
+
+          await executeCommand([
+            'key', 'keystore', 'create', filePath2,
+            '--secret', secret,
+            '--password', password,
+          ]);
+
+          // List keystores
+          const output = await executeCommand([
+            'key', 'keystore', 'list',
+            '--keystore-dir', KEYSTORE_TEST_DIR,
+          ]);
+
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.list.header);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.list.separator);
+          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.list.directoryLabel);
+          expect(output).toContain(KEYSTORE_TEST_DIR);
+        });
+
+        it('should show "No keystores found" for empty directory', async () => {
+          const emptyDir = path.join(os.tmpdir(), '.cazt-empty-keystore-test');
+          await fs.mkdir(emptyDir, { recursive: true });
+
+          try {
+            const output = await executeCommand([
+              'key', 'keystore', 'list',
+              '--keystore-dir', emptyDir,
+            ]);
+
+            expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.list.noKeystores);
+          } finally {
+            await fs.rm(emptyDir, { recursive: true, force: true });
+          }
+        });
+
+        it('should output JSON when --json flag is provided', async () => {
+          // Create a keystore first
+          const filePath = getTestFilePath();
+          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const password = 'testpassword';
+
+          await executeCommand([
+            'key', 'keystore', 'create', filePath,
+            '--secret', secret,
+            '--password', password,
+          ]);
+
+          // List keystores in JSON format
+          const output = await executeCommand([
+            '--json', 'key', 'keystore', 'list',
+            '--keystore-dir', KEYSTORE_TEST_DIR,
+          ]);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(parsed.directory).toBe(KEYSTORE_TEST_DIR);
+          expect(Array.isArray(parsed.keystores)).toBe(true);
+          expect(parsed.keystores.length).toBeGreaterThan(0);
+
+          // Each keystore should have name, id, and path
+          for (const ks of parsed.keystores) {
+            expect(typeof ks.name).toBe('string');
+            expect(typeof ks.id).toBe('string');
+            expect(typeof ks.path).toBe('string');
+          }
+        });
       });
     });
   });

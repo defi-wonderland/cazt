@@ -379,6 +379,199 @@ keyCmd
     }
   });
 
+// =============================================================================
+// KEY KEYSTORE COMMANDS
+// =============================================================================
+
+const keystoreCmd = keyCmd.command('keystore').description('Encrypted keystore file management');
+
+keystoreCmd
+  .command('create <name>')
+  .description('Create a password-encrypted keystore from a secret key')
+  .requiredOption('--secret <key>', 'Secret key to encrypt (hex string)')
+  .option('--password <password>', 'Password for encryption (will prompt if not provided)')
+  .option('--keystore-dir <dir>', 'Custom keystore directory (default: ~/.cazt/keystores)')
+  .action(async (name: string, options: { secret: string; password?: string; keystoreDir?: string }) => {
+    try {
+      const { EncryptedKeystore, resolveKeystorePath, getDefaultKeystoreDir } = await import('./utils/encrypted-keystore.js');
+      const { promptPasswordWithConfirm } = await import('./utils/password.js');
+      const { Fr } = await import('@aztec/foundation/fields');
+
+      // Validate secret key
+      let normalizedSecret: string;
+      try {
+        const secretFr = Fr.fromString(options.secret);
+        normalizedSecret = secretFr.toString();
+      } catch (error: any) {
+        throw new Error(`Invalid secret key: ${error.message}`);
+      }
+
+      // Get password
+      let password = options.password;
+      if (!password) {
+        console.log('Creating encrypted keystore...');
+        console.log('');
+        password = await promptPasswordWithConfirm(
+          'Enter password: ',
+          'Confirm password: '
+        );
+      }
+
+      if (!password || password.length === 0) {
+        throw new Error('Password cannot be empty');
+      }
+
+      // Resolve file path
+      const filePath = resolveKeystorePath(name, options.keystoreDir);
+
+      // Create keystore
+      const result = await EncryptedKeystore.create(normalizedSecret, password, filePath);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify({
+          name,
+          path: result.path,
+          id: result.id,
+          cipher: 'aes-128-ctr',
+          kdf: 'scrypt',
+        }, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('');
+        console.log('Created Encrypted Keystore');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Name: ${name}`);
+        console.log(`Path: ${result.path}`);
+        console.log(`UUID: ${result.id}`);
+        console.log(`Cipher: aes-128-ctr`);
+        console.log(`KDF: scrypt`);
+        console.log('');
+        console.log('WARNING: Remember your password! It cannot be recovered.');
+      }
+    } catch (error: any) {
+      console.error(`Error creating keystore: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+keystoreCmd
+  .command('unlock <name>')
+  .description('Decrypt and read a keystore, outputting the secret key')
+  .option('--password <password>', 'Password for decryption (will prompt if not provided)')
+  .option('--keystore-dir <dir>', 'Custom keystore directory (default: ~/.cazt/keystores)')
+  .action(async (name: string, options: { password?: string; keystoreDir?: string }) => {
+    try {
+      const { EncryptedKeystore, resolveKeystorePath } = await import('./utils/encrypted-keystore.js');
+      const { promptPassword } = await import('./utils/password.js');
+
+      // Resolve file path
+      const filePath = resolveKeystorePath(name, options.keystoreDir);
+
+      // Get password
+      let password = options.password;
+      if (!password) {
+        password = await promptPassword('Enter password: ');
+      }
+
+      if (!password || password.length === 0) {
+        throw new Error('Password cannot be empty');
+      }
+
+      // Decrypt keystore
+      const result = await EncryptedKeystore.decrypt(filePath, password);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify({
+          secret: result.secret,
+          id: result.id,
+        }, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Unlocked Keystore');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`UUID: ${result.id}`);
+        console.log(`Secret: ${result.secret}`);
+        console.log('');
+        console.log('WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.');
+      }
+    } catch (error: any) {
+      console.error(`Error unlocking keystore: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+keystoreCmd
+  .command('inspect <name>')
+  .description('Display keystore metadata without decrypting')
+  .option('--keystore-dir <dir>', 'Custom keystore directory (default: ~/.cazt/keystores)')
+  .action(async (name: string, options: { keystoreDir?: string }) => {
+    try {
+      const { EncryptedKeystore, resolveKeystorePath } = await import('./utils/encrypted-keystore.js');
+
+      // Resolve file path
+      const filePath = resolveKeystorePath(name, options.keystoreDir);
+
+      // Read metadata
+      const metadata = await EncryptedKeystore.readMetadata(filePath);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify({
+          name,
+          path: filePath,
+          ...metadata,
+        }, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Keystore Metadata');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Name: ${name}`);
+        console.log(`Path: ${filePath}`);
+        console.log(`UUID: ${metadata.id}`);
+        console.log(`Cipher: ${metadata.cipher}`);
+        console.log(`KDF: ${metadata.kdf}`);
+      }
+    } catch (error: any) {
+      console.error(`Error reading keystore: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+keystoreCmd
+  .command('list')
+  .description('List all keystores in the keystore directory')
+  .option('--keystore-dir <dir>', 'Custom keystore directory (default: ~/.cazt/keystores)')
+  .action(async (options: { keystoreDir?: string }) => {
+    try {
+      const { EncryptedKeystore, getDefaultKeystoreDir } = await import('./utils/encrypted-keystore.js');
+
+      const keystores = await EncryptedKeystore.list(options.keystoreDir);
+      const dir = options.keystoreDir || getDefaultKeystoreDir();
+
+      if (program.opts().json) {
+        console.log(JSON.stringify({
+          directory: dir,
+          keystores,
+        }, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Keystores');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Directory: ${dir}`);
+        console.log('');
+        if (keystores.length === 0) {
+          console.log('No keystores found.');
+        } else {
+          for (const ks of keystores) {
+            console.log(`  ${ks.name} (${ks.id})`);
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error(`Error listing keystores: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 
