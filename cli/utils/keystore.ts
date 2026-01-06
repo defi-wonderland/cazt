@@ -25,10 +25,41 @@ interface KeyStoreData {
  * Keys are stored in ~/.cazt/keys.json with proper permissions
  */
 export class KeyStore {
-  private static readonly CAZT_DIR = path.join(os.homedir(), '.cazt');
-  private static readonly KEYS_FILE = path.join(KeyStore.CAZT_DIR, 'keys.json');
+  private static readonly DEFAULT_DIR = path.join(os.homedir(), '.cazt');
+  private static readonly DEFAULT_FILE = 'keys.json';
   private static readonly VERSION = '1.0.0';
   private static readonly FILE_MODE = 0o600; // Read/write for owner only
+
+  // Configurable paths for testing
+  private static _customDir: string | null = null;
+  private static _customFile: string | null = null;
+
+  /**
+   * Set custom keystore directory and filename (for testing)
+   * @param dir - Custom directory path (null to reset to default)
+   * @param filename - Custom filename (null to reset to default)
+   */
+  static setCustomPath(dir: string | null, filename: string | null = null): void {
+    KeyStore._customDir = dir;
+    KeyStore._customFile = filename;
+  }
+
+  /**
+   * Reset to default keystore path
+   */
+  static resetPath(): void {
+    KeyStore._customDir = null;
+    KeyStore._customFile = null;
+  }
+
+  private static get CAZT_DIR(): string {
+    return KeyStore._customDir ?? KeyStore.DEFAULT_DIR;
+  }
+
+  private static get KEYS_FILE(): string {
+    const filename = KeyStore._customFile ?? KeyStore.DEFAULT_FILE;
+    return path.join(KeyStore.CAZT_DIR, filename);
+  }
 
   /**
    * Validates that an alias follows naming rules

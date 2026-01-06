@@ -155,13 +155,15 @@ keyCmd
   });
 
 keyCmd
-  .command('derive-keys <secret>')
-  .description('Derive keys from secret key')
+  .command('derive-keys [secret]')
+  .description('Derive keys from secret key or keystore alias')
+  .option('--alias <name>', 'Load secret from keystore by alias')
   .option('--public', 'Include public keys in the output')
-  .action(async (secret: string, options: { public?: boolean }) => {
+  .action(async (secret: string | undefined, options: { alias?: string; public?: boolean }) => {
     try {
-      const { WalletUtils } = await import('./utils/wallet.js');
-      const result = await WalletUtils.deriveKeysFromSecret(secret, options.public || false);
+      const { WalletUtils, resolveSecret } = await import('./utils/wallet.js');
+      const resolvedSecret = await resolveSecret(secret, options.alias);
+      const result = await WalletUtils.deriveKeysFromSecret(resolvedSecret, options.public || false);
 
       if (program.opts().json) {
         console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
@@ -191,13 +193,15 @@ keyCmd
   });
 
 keyCmd
-  .command('derive-address <secret>')
-  .description('Compute account address from secret key or passphrase')
+  .command('derive-address [secret]')
+  .description('Compute account address from secret key, passphrase, or keystore alias')
+  .option('--alias <name>', 'Load secret from keystore by alias')
   .option('--salt <salt>', 'Optional salt for address derivation')
-  .action(async (secret: string, options: { salt?: string }) => {
+  .action(async (secret: string | undefined, options: { alias?: string; salt?: string }) => {
     try {
-      const { WalletUtils } = await import('./utils/wallet.js');
-      const result = await WalletUtils.deriveAddress(secret, options.salt);
+      const { WalletUtils, resolveSecret } = await import('./utils/wallet.js');
+      const resolvedSecret = await resolveSecret(secret, options.alias);
+      const result = await WalletUtils.deriveAddress(resolvedSecret, options.salt);
 
       if (program.opts().json) {
         console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
@@ -239,7 +243,6 @@ keyCmd
         console.log('');
         console.log(`Alias: ${result.alias}`);
         console.log(`Secret: ${result.secret}`);
-        console.log(`Address: ${result.address}`);
         console.log('');
         console.log(`Stored in: ${result.keystorePath}`);
         console.log('');
@@ -267,7 +270,6 @@ keyCmd
         console.log('');
         console.log(`Alias: ${result.alias}`);
         console.log(`Secret: ${result.secret}`);
-        console.log(`Address: ${result.address}`);
         console.log('');
         console.log(`Created: ${new Date(result.createdAt).toLocaleString()}`);
         console.log(`Updated: ${new Date(result.updatedAt).toLocaleString()}`);

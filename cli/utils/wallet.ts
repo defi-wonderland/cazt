@@ -27,6 +27,29 @@ function passphraseToSecretKey(passphrase: string): Fr {
 }
 
 /**
+ * Resolve a secret key from either a direct input or an alias
+ * @param secret - Direct secret key (optional)
+ * @param alias - Alias to load from keystore (optional)
+ * @returns The resolved secret key string
+ * @throws Error if neither or both are provided
+ */
+export async function resolveSecret(secret?: string, alias?: string): Promise<string> {
+  if (secret && alias) {
+    throw new Error('Cannot specify both <secret> and --alias. Use one or the other.');
+  }
+  if (!secret && !alias) {
+    throw new Error('Must specify either <secret> or --alias <name>.');
+  }
+
+  if (alias) {
+    const storedKey = await KeyStore.load(alias);
+    return storedKey.secret;
+  }
+
+  return secret!;
+}
+
+/**
  * Result type for key generation
  */
 export interface GeneratedKey {
@@ -58,7 +81,6 @@ export interface DerivedKeys {
 export interface ImportedKey {
   alias: string;
   secret: string;
-  address: string;
   stored: boolean;
   keystorePath: string;
   warning: string;
@@ -70,7 +92,6 @@ export interface ImportedKey {
 export interface ExportedKey {
   alias: string;
   secret: string;
-  address: string;
   createdAt: string;
   updatedAt: string;
   warning: string;
@@ -181,16 +202,12 @@ export class WalletUtils {
       );
     }
 
-    // Derive the address for this key
-    const { address } = await this.deriveAddress(normalizedSecret);
-
     // Store the key in the keystore
     await KeyStore.save(alias, normalizedSecret, force);
 
     return {
       alias,
       secret: normalizedSecret,
-      address,
       stored: true,
       keystorePath: KeyStore.getKeysFilePath(),
       warning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
@@ -206,13 +223,9 @@ export class WalletUtils {
     // Load the key from keystore
     const storedKey = await KeyStore.load(alias);
 
-    // Derive the address for verification
-    const { address } = await this.deriveAddress(storedKey.secret);
-
     return {
       alias: storedKey.alias,
       secret: storedKey.secret,
-      address,
       createdAt: storedKey.createdAt,
       updatedAt: storedKey.updatedAt,
       warning: 'SECURITY WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.',

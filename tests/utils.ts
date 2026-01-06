@@ -460,7 +460,6 @@ export const IMPORT_KEY_TEST_VECTORS = {
       separator: /={50}/,
       aliasLabel: /Alias:/,
       secretLabel: /Secret:/,
-      addressLabel: /Address:/,
       storedLabel: /Stored in:/,
       warningLabel: /WARNING:/,
       keyValue: /0x[0-9a-f]+/i,
@@ -469,7 +468,6 @@ export const IMPORT_KEY_TEST_VECTORS = {
     json: {
       hasAlias: /"alias"\s*:/,
       hasSecret: /"secret"\s*:/,
-      hasAddress: /"address"\s*:/,
       hasStored: /"stored"\s*:/,
       hasKeystorePath: /"keystorePath"\s*:/,
       hasWarning: /"warning"\s*:/,
@@ -559,12 +557,10 @@ export function isValidImportedKeyJson(obj: any): boolean {
     typeof obj === 'object' &&
     typeof obj.alias === 'string' &&
     typeof obj.secret === 'string' &&
-    typeof obj.address === 'string' &&
     typeof obj.stored === 'boolean' &&
     typeof obj.keystorePath === 'string' &&
     typeof obj.warning === 'string' &&
-    isValidSecretKey(obj.secret) &&
-    isValidAztecAddress(obj.address)
+    isValidSecretKey(obj.secret)
   );
 }
 
@@ -579,7 +575,6 @@ export const EXPORT_KEY_TEST_VECTORS = {
       separator: /={50}/,
       aliasLabel: /Alias:/,
       secretLabel: /Secret:/,
-      addressLabel: /Address:/,
       createdLabel: /Created:/,
       updatedLabel: /Updated:/,
       warningLabel: /WARNING:/,
@@ -589,7 +584,6 @@ export const EXPORT_KEY_TEST_VECTORS = {
     json: {
       hasAlias: /"alias"\s*:/,
       hasSecret: /"secret"\s*:/,
-      hasAddress: /"address"\s*:/,
       hasCreatedAt: /"createdAt"\s*:/,
       hasUpdatedAt: /"updatedAt"\s*:/,
       hasWarning: /"warning"\s*:/,
@@ -612,11 +606,9 @@ export function isValidExportedKeyJson(obj: any): boolean {
     typeof obj === 'object' &&
     typeof obj.alias === 'string' &&
     typeof obj.secret === 'string' &&
-    typeof obj.address === 'string' &&
     typeof obj.createdAt === 'string' &&
     typeof obj.updatedAt === 'string' &&
     typeof obj.warning === 'string' &&
-    isValidSecretKey(obj.secret) &&
-    isValidAztecAddress(obj.address)
+    isValidSecretKey(obj.secret)
   );
 }
