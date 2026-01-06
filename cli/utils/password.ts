@@ -31,8 +31,9 @@ export async function promptPassword(prompt: string = 'Password: ', hidden: bool
       let password = '';
 
       const cleanup = () => {
-        process.stdin.setRawMode(wasRaw || false);
         process.stdin.removeListener('data', onData);
+        process.stdin.setRawMode(wasRaw || false);
+        process.stdin.pause();
         process.stderr.write('\n');
       };
 
