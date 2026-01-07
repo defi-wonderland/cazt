@@ -459,24 +459,24 @@ export const IMPORT_KEY_TEST_VECTORS = {
       header: /Imported Secret Key/,
       separator: /={50}/,
       aliasLabel: /Alias:/,
-      secretLabel: /Secret:/,
+      encryptedLabel: /Encrypted:/,
       storedLabel: /Stored in:/,
       warningLabel: /WARNING:/,
       keyValue: /0x[0-9a-f]+/i,
-      securityWarning: /Your secret key is stored locally/,
     },
     json: {
       hasAlias: /"alias"\s*:/,
       hasSecret: /"secret"\s*:/,
-      hasStored: /"stored"\s*:/,
-      hasKeystorePath: /"keystorePath"\s*:/,
+      hasEncrypted: /"encrypted"\s*:/,
+      hasStoragePath: /"storagePath"\s*:/,
       hasWarning: /"warning"\s*:/,
       validJson: /^\{[\s\S]*\}$/,
     },
   },
 
-  // Expected warning text
-  expectedWarning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
+  // Expected warning texts
+  encryptedWarning: 'Your secret is encrypted. Remember your password - it cannot be recovered.',
+  plainWarning: 'SECURITY WARNING: Your secret is stored unencrypted. Consider using encryption for production keys.',
 
   // Valid alias test cases
   validAliases: [
@@ -557,8 +557,8 @@ export function isValidImportedKeyJson(obj: any): boolean {
     typeof obj === 'object' &&
     typeof obj.alias === 'string' &&
     typeof obj.secret === 'string' &&
-    typeof obj.stored === 'boolean' &&
-    typeof obj.keystorePath === 'string' &&
+    typeof obj.encrypted === 'boolean' &&
+    typeof obj.storagePath === 'string' &&
     typeof obj.warning === 'string' &&
     isValidSecretKey(obj.secret)
   );
@@ -574,9 +574,8 @@ export const EXPORT_KEY_TEST_VECTORS = {
       header: /Exported Secret Key/,
       separator: /={50}/,
       aliasLabel: /Alias:/,
+      encryptedLabel: /Encrypted:/,
       secretLabel: /Secret:/,
-      createdLabel: /Created:/,
-      updatedLabel: /Updated:/,
       warningLabel: /WARNING:/,
       keyValue: /0x[0-9a-f]+/i,
       securityWarning: /Handle this secret key carefully/,
@@ -584,8 +583,7 @@ export const EXPORT_KEY_TEST_VECTORS = {
     json: {
       hasAlias: /"alias"\s*:/,
       hasSecret: /"secret"\s*:/,
-      hasCreatedAt: /"createdAt"\s*:/,
-      hasUpdatedAt: /"updatedAt"\s*:/,
+      hasEncrypted: /"encrypted"\s*:/,
       hasWarning: /"warning"\s*:/,
       validJson: /^\{[\s\S]*\}$/,
     },
@@ -593,6 +591,49 @@ export const EXPORT_KEY_TEST_VECTORS = {
 
   // Expected warning text
   expectedWarning: 'SECURITY WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.',
+};
+
+/**
+ * Test vectors for key list
+ */
+export const LIST_KEYS_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Stored Secrets/,
+      separator: /={50}/,
+      storageLabel: /Storage:/,
+      encryptedStatus: /\(encrypted\)/,
+      plainStatus: /\(plain\)/,
+      noSecrets: /No secrets stored/,
+    },
+    json: {
+      hasSecrets: /"secrets"\s*:/,
+      hasStoragePath: /"storagePath"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+};
+
+/**
+ * Test vectors for key delete
+ */
+export const DELETE_KEY_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Deleted Secret/,
+      separator: /={50}/,
+      aliasLabel: /Alias:/,
+      wasEncryptedLabel: /Was encrypted:/,
+    },
+    json: {
+      hasDeleted: /"deleted"\s*:/,
+      hasAlias: /"alias"\s*:/,
+      hasEncrypted: /"encrypted"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
 };
 
 /**
@@ -606,10 +647,42 @@ export function isValidExportedKeyJson(obj: any): boolean {
     typeof obj === 'object' &&
     typeof obj.alias === 'string' &&
     typeof obj.secret === 'string' &&
-    typeof obj.createdAt === 'string' &&
-    typeof obj.updatedAt === 'string' &&
+    typeof obj.encrypted === 'boolean' &&
     typeof obj.warning === 'string' &&
     isValidSecretKey(obj.secret)
+  );
+}
+
+/**
+ * Validates the structure of a ListedKeys JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidListedKeysJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    Array.isArray(obj.secrets) &&
+    typeof obj.storagePath === 'string' &&
+    obj.secrets.every((s: any) =>
+      typeof s.alias === 'string' &&
+      typeof s.encrypted === 'boolean'
+    )
+  );
+}
+
+/**
+ * Validates the structure of a DeletedKey JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidDeletedKeyJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    obj.deleted === true &&
+    typeof obj.alias === 'string' &&
+    typeof obj.encrypted === 'boolean'
   );
 }
 

@@ -106,3 +106,25 @@ export async function promptPasswordWithConfirm(
 
   return password;
 }
+
+/**
+ * Prompt for a yes/no confirmation
+ *
+ * @param prompt - The prompt message to display
+ * @returns true if user confirms, false otherwise
+ */
+export async function promptConfirm(prompt: string): Promise<boolean> {
+  const rl = await import('readline');
+  const readline = rl.createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+
+  return new Promise((resolve) => {
+    readline.question(prompt, (answer) => {
+      readline.close();
+      const normalized = answer.toLowerCase().trim();
+      resolve(normalized === 'y' || normalized === 'yes');
+    });
+  });
+}

@@ -174,9 +174,14 @@ export class EncryptedKeystore {
     const cleanSecret = secret.startsWith('0x') ? secret.slice(2) : secret;
     const secretBuffer = Buffer.from(cleanSecret, 'hex');
 
-    // Validate secret key length (should be 32 bytes for Fr)
+    // Validate hex string was properly parsed
+    if (secretBuffer.length === 0) {
+      throw new Error('Invalid secret: empty or invalid hex string');
+    }
+
+    // Warn if secret key length is not 32 bytes (standard Aztec Fr size)
     if (secretBuffer.length !== 32) {
-      throw new Error(`Invalid secret key length: expected 32 bytes, got ${secretBuffer.length}`);
+      console.warn(`Warning: Secret key is ${secretBuffer.length} bytes (expected 32 bytes for Aztec Fr)`);
     }
 
     // Generate random salt and IV
@@ -367,20 +372,20 @@ export class EncryptedKeystore {
    * List all keystores in a directory
    *
    * @param keystoreDir - Directory to list keystores from (defaults to ~/.cazt/keystores)
-   * @returns Array of keystore names and their metadata
+   * @returns Object with directory and array of keystores
    */
-  static async list(keystoreDir?: string): Promise<Array<{ name: string; id: string; path: string }>> {
+  static async list(keystoreDir?: string): Promise<{ directory: string; keystores: Array<{ name: string; id: string; path: string }> }> {
     const dir = keystoreDir || DEFAULT_KEYSTORE_DIR;
+    const keystores: Array<{ name: string; id: string; path: string }> = [];
 
     try {
       await fs.access(dir);
     } catch {
       // Directory doesn't exist, return empty list
-      return [];
+      return { directory: dir, keystores };
     }
 
     const entries = await fs.readdir(dir, { withFileTypes: true });
-    const keystores: Array<{ name: string; id: string; path: string }> = [];
 
     for (const entry of entries) {
       if (entry.isFile()) {
@@ -400,6 +405,190 @@ export class EncryptedKeystore {
       }
     }
 
-    return keystores;
+    return { directory: dir, keystores };
+  }
+
+  // =========================================================================
+  // CLI-friendly wrapper methods
+  // =========================================================================
+
+  /**
+   * Create an encrypted keystore (CLI wrapper)
+   * Prompts for password if not provided
+   */
+  static async createKeystore(
+    secret: string,
+    name: string,
+    options: { password?: string; keystoreDir?: string } = {}
+  ): Promise<{
+    name: string;
+    path: string;
+    id: string;
+    cipher: string;
+    kdf: string;
+    warning: string;
+  }> {
+    const { promptPasswordWithConfirm, promptConfirm } = await import('./password.js');
+
+    // Get password - if not provided, prompt for it
+    let password: string;
+    const passwordWasProvided = options.password !== undefined;
+
+    if (passwordWasProvided) {
+      password = options.password!;
+    } else {
+      password = await promptPasswordWithConfirm(
+        'Enter password to encrypt keystore: ',
+        'Confirm password: '
+      );
+
+      // Confirm if user entered empty password interactively
+      if (password.length === 0) {
+        const confirmed = await promptConfirm('Warning: Empty password provides no security. Continue? (y/N): ');
+        if (!confirmed) {
+          throw new Error('Keystore creation cancelled');
+        }
+      }
+    }
+
+    // Resolve path
+    const filePath = resolveKeystorePath(name, options.keystoreDir);
+
+    // Check if file already exists
+    try {
+      await fs.access(filePath);
+      throw new Error(`Keystore '${name}' already exists at ${filePath}`);
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        throw err;
+      }
+    }
+
+    // Create the keystore
+    const result = await EncryptedKeystore.create(secret, password, filePath);
+
+    return {
+      name,
+      path: filePath,
+      id: result.id,
+      cipher: 'aes-128-ctr',
+      kdf: 'scrypt',
+      warning: 'Remember your password - it cannot be recovered. The keystore file is the only backup of your encrypted secret.',
+    };
+  }
+
+  /**
+   * Unlock (decrypt) a keystore (CLI wrapper)
+   * Prompts for password if not provided
+   */
+  static async unlock(
+    name: string,
+    options: { password?: string; keystoreDir?: string } = {}
+  ): Promise<{
+    name: string;
+    id: string;
+    secret: string;
+    warning: string;
+  }> {
+    const { promptPassword } = await import('./password.js');
+
+    // Resolve path
+    const filePath = resolveKeystorePath(name, options.keystoreDir);
+
+    // Check if file exists
+    try {
+      await fs.access(filePath);
+    } catch {
+      throw new Error(`Keystore '${name}' not found at ${filePath}`);
+    }
+
+    // Prompt for password if not provided
+    const password = options.password || await promptPassword('Enter password to decrypt keystore: ');
+
+    // Decrypt
+    const result = await EncryptedKeystore.decrypt(filePath, password);
+
+    return {
+      name,
+      id: result.id,
+      secret: result.secret,
+      warning: 'SECURITY WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.',
+    };
+  }
+
+  /**
+   * Inspect keystore metadata (CLI wrapper)
+   */
+  static async inspect(
+    name: string,
+    keystoreDir?: string
+  ): Promise<{
+    name: string;
+    path: string;
+    id: string;
+    version: number;
+    cipher: string;
+    kdf: string;
+  }> {
+    const filePath = resolveKeystorePath(name, keystoreDir);
+
+    // Check if file exists
+    try {
+      await fs.access(filePath);
+    } catch {
+      throw new Error(`Keystore '${name}' not found at ${filePath}`);
+    }
+
+    // Read file
+    const content = await fs.readFile(filePath, 'utf-8');
+    let keystore: KeystoreFile;
+
+    try {
+      keystore = JSON.parse(content);
+    } catch {
+      throw new Error('Invalid keystore file: not valid JSON');
+    }
+
+    return {
+      name,
+      path: filePath,
+      id: keystore.id,
+      version: keystore.version,
+      cipher: keystore.crypto.cipher,
+      kdf: keystore.crypto.kdf,
+    };
+  }
+
+  /**
+   * Delete a keystore file (CLI wrapper)
+   */
+  static async delete(
+    name: string,
+    keystoreDir?: string
+  ): Promise<{
+    name: string;
+    path: string;
+  }> {
+    const filePath = resolveKeystorePath(name, keystoreDir);
+
+    // Check if file exists
+    try {
+      await fs.access(filePath);
+    } catch {
+      throw new Error(`Keystore '${name}' not found at ${filePath}`);
+    }
+
+    // Verify it's a valid keystore before deleting
+    if (!await EncryptedKeystore.isValidKeystore(filePath)) {
+      throw new Error(`File '${name}' is not a valid keystore`);
+    }
+
+    // Delete the file
+    await fs.unlink(filePath);
+
+    return {
+      name,
+      path: filePath,
+    };
   }
 }

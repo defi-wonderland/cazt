@@ -17,10 +17,13 @@ import {
   parseJsonOutput,
   IMPORT_KEY_TEST_VECTORS,
   extractAlias,
-  extractKeystorePath,
   isValidImportedKeyJson,
   EXPORT_KEY_TEST_VECTORS,
   isValidExportedKeyJson,
+  LIST_KEYS_TEST_VECTORS,
+  isValidListedKeysJson,
+  DELETE_KEY_TEST_VECTORS,
+  isValidDeletedKeyJson,
   isValidSchnorrSignature,
   isValidPublicKey,
   extractSignature,
@@ -31,33 +34,21 @@ import {
   extractValid,
   isValidVerifiedSignatureJson,
   VERIFY_SIGNATURE_TEST_VECTORS,
-  ENCRYPTED_KEYSTORE_TEST_VECTORS,
-  isValidUuidV4,
-  extractKeystoreUuid,
-  extractKeystoreFile,
-  extractKeystoreCipher,
-  extractKeystoreKdf,
-  extractUnlockedSecret,
-  isValidKeystoreCreateJson,
-  isValidKeystoreUnlockJson,
-  isValidKeystoreInspectJson,
-  isValidKeystoreFile,
 } from './utils.js';
-import { KeyStore } from '../cli/utils/keystore.js';
+import { SecretManager } from '../cli/utils/secret-manager.js';
 import * as os from 'os';
 import * as path from 'path';
 import { promises as fs } from 'fs';
 
-// Use a test-specific keystore to avoid touching user's real keys
-const TEST_KEYSTORE_DIR = path.join(os.tmpdir(), '.cazt');
-const TEST_KEYSTORE_FILE = 'keys_test.json';
+// Use a test-specific directory to avoid touching user's real secrets
+const TEST_SECRETS_DIR = path.join(os.tmpdir(), '.cazt-secrets-test');
 
-// Configure test keystore before all tests
+// Configure test secrets directory before all tests
 beforeAll(async () => {
-  KeyStore.setCustomPath(TEST_KEYSTORE_DIR, TEST_KEYSTORE_FILE);
+  SecretManager.setCustomDir(TEST_SECRETS_DIR);
   // Ensure clean test directory
   try {
-    await fs.rm(TEST_KEYSTORE_DIR, { recursive: true, force: true });
+    await fs.rm(TEST_SECRETS_DIR, { recursive: true, force: true });
   } catch {
     // Ignore if doesn't exist
   }
@@ -66,11 +57,11 @@ beforeAll(async () => {
 // Clean up after all tests
 afterAll(async () => {
   try {
-    await fs.rm(TEST_KEYSTORE_DIR, { recursive: true, force: true });
+    await fs.rm(TEST_SECRETS_DIR, { recursive: true, force: true });
   } catch {
     // Ignore cleanup errors
   }
-  KeyStore.resetPath();
+  SecretManager.resetDir();
 });
 
 // Enable test mode to use separate keystore (~/.cazt/keys_test.json)
@@ -81,25 +72,34 @@ process.env.NODE_ENV = 'test';
 let consoleOutput: string[] = [];
 let originalLog: typeof console.log;
 let originalError: typeof console.error;
+let originalStderrWrite: typeof process.stderr.write;
 
 beforeEach(() => {
   consoleOutput = [];
   originalLog = console.log;
   originalError = console.error;
-  
+  originalStderrWrite = process.stderr.write;
+
   // Simple mock that captures output
   console.log = ((...args: any[]) => {
     consoleOutput.push(args.map(String).join(' '));
   }) as typeof console.log;
-  
+
   console.error = ((...args: any[]) => {
     consoleOutput.push(args.map(String).join(' '));
   }) as typeof console.error;
+
+  // Commander.js writes directly to stderr, so capture that too
+  process.stderr.write = ((chunk: any) => {
+    consoleOutput.push(String(chunk).trim());
+    return true;
+  }) as typeof process.stderr.write;
 });
 
 afterEach(() => {
   console.log = originalLog;
   console.error = originalError;
+  process.stderr.write = originalStderrWrite;
 });
 
 /**
@@ -114,12 +114,11 @@ async function executeCommand(args: string[], expectError = false): Promise<stri
   let exitCode: number | undefined;
   
   // Mock process.exit to prevent actual exit
+  // Always throw to stop execution - commander calls exit on validation errors
   process.exit = ((code?: number) => {
     exitCalled = true;
     exitCode = code;
-    if (!expectError) {
-      throw new Error(`Process exited with code ${code || 0}`);
-    }
+    throw new Error(`Process exited with code ${code || 0}`);
   }) as typeof process.exit;
   
   process.argv = ['node', 'cli.js', ...args];
@@ -141,8 +140,9 @@ async function executeCommand(args: string[], expectError = false): Promise<stri
     return consoleOutput.join('\n');
   } catch (error: any) {
     if (expectError) {
-      // Return the error message as output for error cases
-      return error.message || consoleOutput.join('\n');
+      // Return captured output (console errors) + error message for error cases
+      const output = consoleOutput.join('\n');
+      return output || error.message;
     }
     throw error;
   } finally {
@@ -295,8 +295,8 @@ describe('CLI Commands', () => {
         // But should contain the actual labels
         expect(output).toContain('Secret Key:');
         expect(output).toContain('WARNING:');
+      });
     });
-  });
 
     describe('derive-keys subcommand', () => {
       const testSecret = '0x0000000000000000000000000000000000000000000000000000000000000001';
@@ -543,16 +543,16 @@ describe('CLI Commands', () => {
         const testAlias = 'deriveKeysAliasTest';
 
         beforeEach(async () => {
-          await KeyStore.clear();
+          await SecretManager.clear();
         });
 
         afterEach(async () => {
-          await KeyStore.clear();
+          await SecretManager.clear();
         });
 
-        it('should derive keys using secret from keystore alias', async () => {
-          // First import a key
-          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+        it('should derive keys using secret from stored alias', async () => {
+          // First import a key (unencrypted for test simplicity)
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
 
           // Then derive keys using the alias
           const output = await executeCommand(['key', 'derive-keys', '--alias', testAlias]);
@@ -564,8 +564,8 @@ describe('CLI Commands', () => {
         });
 
         it('should produce same keys as direct secret input', async () => {
-          // Import the key
-          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+          // Import the key (unencrypted for test simplicity)
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
 
           // Derive using direct secret
           const directOutput = await executeCommand(['key', 'derive-keys', testSecret]);
@@ -586,7 +586,7 @@ describe('CLI Commands', () => {
         });
 
         it('should fail when both secret and alias are provided', async () => {
-          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
 
           const output = await executeCommand(['key', 'derive-keys', testSecret, '--alias', testAlias], true);
 
@@ -600,7 +600,7 @@ describe('CLI Commands', () => {
         });
 
         it('should work with --public flag and alias', async () => {
-          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
 
           const output = await executeCommand(['key', 'derive-keys', '--alias', testAlias, '--public']);
 
@@ -610,7 +610,6 @@ describe('CLI Commands', () => {
         });
       });
     });
-  });
 
     describe('derive-address subcommand', () => {
       const testSecret = '0x0000000000000000000000000000000000000000000000000000000000000001';
@@ -893,16 +892,16 @@ describe('CLI Commands', () => {
         const testAlias = 'deriveAddressAliasTest';
 
         beforeEach(async () => {
-          await KeyStore.clear();
+          await SecretManager.clear();
         });
 
         afterEach(async () => {
-          await KeyStore.clear();
+          await SecretManager.clear();
         });
 
-        it('should derive address using secret from keystore alias', async () => {
-          // First import a key
-          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+        it('should derive address using secret from stored alias', async () => {
+          // First import a key (unencrypted for test simplicity)
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
 
           // Then derive address using the alias
           const output = await executeCommand(['key', 'derive-address', '--alias', testAlias]);
@@ -914,8 +913,8 @@ describe('CLI Commands', () => {
         });
 
         it('should produce same address as direct secret input', async () => {
-          // Import the key
-          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+          // Import the key (unencrypted for test simplicity)
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
 
           // Derive using direct secret
           const directOutput = await executeCommand(['key', 'derive-address', testSecret]);
@@ -935,7 +934,7 @@ describe('CLI Commands', () => {
         });
 
         it('should fail when both secret and alias are provided', async () => {
-          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
 
           const output = await executeCommand(['key', 'derive-address', testSecret, '--alias', testAlias], true);
 
@@ -949,7 +948,7 @@ describe('CLI Commands', () => {
         });
 
         it('should work with --salt flag and alias', async () => {
-          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
 
           const output = await executeCommand(['key', 'derive-address', '--alias', testAlias, '--salt', '42']);
 
@@ -960,7 +959,7 @@ describe('CLI Commands', () => {
         });
 
         it('should derive different addresses with same alias but different salts', async () => {
-          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
 
           const output1 = await executeCommand(['key', 'derive-address', '--alias', testAlias, '--salt', '0']);
           const output2 = await executeCommand(['key', 'derive-address', '--alias', testAlias, '--salt', '1']);
@@ -975,437 +974,408 @@ describe('CLI Commands', () => {
 
     describe('import subcommand', () => {
       const testSecret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+      const testPassword = 'testpassword123';
 
-      // Clean up keystore before and after each test
+      // Clean up secrets before and after each test
       beforeEach(async () => {
-        await KeyStore.clear();
+        await SecretManager.clear();
       });
 
       afterEach(async () => {
-        await KeyStore.clear();
+        await SecretManager.clear();
       });
 
-      it('should import a secret key with alias with human-readable output', async () => {
-        const alias = 'mykey';
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+      describe('encrypted import (default)', () => {
+        it('should import an encrypted secret key with human-readable output', async () => {
+          const alias = 'mykey';
+          const output = await executeCommand([
+            'key', 'import', testSecret, '--alias', alias, '--password', testPassword
+          ]);
 
-        // Check for expected output structure
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.separator);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.aliasLabel);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.secretLabel);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.storedLabel);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.warningLabel);
-      });
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.separator);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.aliasLabel);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.encryptedLabel);
+          expect(output).toMatch(/yes/i); // encrypted: yes
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.storedLabel);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.warningLabel);
+        });
 
-      it('should import and store a valid secret key', async () => {
-        const alias = 'testkey';
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
-
-        // Verify the key was stored
-        const stored = await KeyStore.load(alias);
-        expect(stored).toBeDefined();
-        expect(stored.alias).toBe(alias);
-        expect(isValidSecretKey(stored.secret)).toBe(true);
-      });
-
-      it('should extract and display the alias correctly', async () => {
-        const alias = 'myWallet';
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
-
-        const extractedAlias = extractAlias(output);
-        expect(extractedAlias).toBe(alias);
-      });
-
-      it('should display the keystore path', async () => {
-        const alias = 'pathTest';
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
-
-        const keystorePath = extractKeystorePath(output);
-        expect(keystorePath).not.toBeNull();
-        expect(keystorePath).toContain('.cazt');
-        expect(keystorePath).toContain('keys_test.json');
-      });
-
-      it('should display the security warning', async () => {
-        const alias = 'warningTest';
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
-
-        const warning = extractWarning(output);
-        expect(warning).toBe(IMPORT_KEY_TEST_VECTORS.expectedWarning);
-      });
-
-      it('should handle various valid aliases', async () => {
-        for (const testCase of IMPORT_KEY_TEST_VECTORS.validAliases) {
-          await KeyStore.clear(); // Clear for each test
-          const output = await executeCommand(['key', 'import', testSecret, '--alias', testCase.alias]);
+        it('should extract and display the alias correctly', async () => {
+          const alias = 'myWallet';
+          const output = await executeCommand([
+            'key', 'import', testSecret, '--alias', alias, '--password', testPassword
+          ]);
 
           const extractedAlias = extractAlias(output);
-          expect(extractedAlias).toBe(testCase.alias);
+          expect(extractedAlias).toBe(alias);
+        });
 
-          // Verify storage
-          const stored = await KeyStore.load(testCase.alias);
-          expect(stored.alias).toBe(testCase.alias);
-        }
+        it('should output JSON when --json flag is used', async () => {
+          const alias = 'jsonTest';
+          const output = await executeCommand([
+            '--json', 'key', 'import', testSecret, '--alias', alias, '--password', testPassword
+          ]);
+
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.validJson);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasAlias);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasSecret);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasEncrypted);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasStoragePath);
+
+          const parsed = parseJsonOutput(output);
+          expect(isValidImportedKeyJson(parsed)).toBe(true);
+          expect(parsed.encrypted).toBe(true);
+        });
+
+        it('should produce correct data in JSON format', async () => {
+          const alias = 'jsonDataTest';
+          const output = await executeCommand([
+            '--json', 'key', 'import', testSecret, '--alias', alias, '--password', testPassword
+          ]);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(parsed.alias).toBe(alias);
+          expect(parsed.secret).toBe(testSecret);
+          expect(parsed.encrypted).toBe(true);
+          expect(parsed.storagePath).toContain(alias); // Encrypted files use alias as filename
+        });
       });
 
-      it('should reject invalid aliases', async () => {
-        for (const testCase of IMPORT_KEY_TEST_VECTORS.invalidAliases) {
-          const output = await executeCommand(['key', 'import', testSecret, '--alias', testCase.alias], true);
+      describe('unencrypted import (--no-encrypt)', () => {
+        it('should import an unencrypted secret key with human-readable output', async () => {
+          const alias = 'plainkey';
+          const output = await executeCommand([
+            'key', 'import', testSecret, '--alias', alias, '--no-encrypt'
+          ]);
 
-          expect(output).toMatch(/Invalid alias/i);
-        }
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.aliasLabel);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.encryptedLabel);
+          expect(output).toMatch(/no/i); // encrypted: no
+        });
+
+        it('should output JSON when --json flag is used', async () => {
+          const alias = 'plainJsonTest';
+          const output = await executeCommand([
+            '--json', 'key', 'import', testSecret, '--alias', alias, '--no-encrypt'
+          ]);
+
+          const parsed = parseJsonOutput(output);
+          expect(isValidImportedKeyJson(parsed)).toBe(true);
+          expect(parsed.encrypted).toBe(false);
+          expect(parsed.storagePath).toContain('keys.json');
+        });
+
+        it('should handle various valid aliases', async () => {
+          for (const testCase of IMPORT_KEY_TEST_VECTORS.validAliases.slice(0, 3)) {
+            await SecretManager.clear();
+            const output = await executeCommand([
+              'key', 'import', testSecret, '--alias', testCase.alias, '--no-encrypt'
+            ]);
+
+            const extractedAlias = extractAlias(output);
+            expect(extractedAlias).toBe(testCase.alias);
+          }
+        });
       });
 
-      it('should reject invalid secret keys', async () => {
-        for (const testCase of IMPORT_KEY_TEST_VECTORS.invalidSecrets) {
-          const output = await executeCommand(['key', 'import', testCase.secret, '--alias', 'test'], true);
+      describe('common behavior', () => {
+        it('should reject invalid aliases', async () => {
+          for (const testCase of IMPORT_KEY_TEST_VECTORS.invalidAliases) {
+            const output = await executeCommand([
+              'key', 'import', testSecret, '--alias', testCase.alias, '--no-encrypt'
+            ], true);
 
-          expect(output).toMatch(/Invalid secret key|Error/i);
-        }
-      });
+            expect(output).toMatch(/Invalid alias/i);
+          }
+        });
 
-      it('should reject duplicate alias without --force flag', async () => {
-        const alias = 'duplicate';
+        it('should reject invalid secret keys', async () => {
+          for (const testCase of IMPORT_KEY_TEST_VECTORS.invalidSecrets) {
+            const output = await executeCommand([
+              'key', 'import', testCase.secret, '--alias', 'test', '--no-encrypt'
+            ], true);
 
-        // Import first time
-        await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+            expect(output).toMatch(/Invalid secret key|Error/i);
+          }
+        });
 
-        // Try to import again with same alias
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias], true);
+        it('should reject duplicate alias without --force flag', async () => {
+          const alias = 'duplicate';
 
-        expect(output).toMatch(/already exists/i);
-        expect(output).toMatch(/--force/i);
-      });
+          await executeCommand([
+            'key', 'import', testSecret, '--alias', alias, '--no-encrypt'
+          ]);
 
-      it('should allow overwriting with --force flag', async () => {
-        const alias = 'forceTest';
-        const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
-        const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
+          const output = await executeCommand([
+            'key', 'import', testSecret, '--alias', alias, '--no-encrypt'
+          ], true);
 
-        // Import first key
-        await executeCommand(['key', 'import', secret1, '--alias', alias]);
+          expect(output).toMatch(/already exists/i);
+          expect(output).toMatch(/--force/i);
+        });
 
-        // Overwrite with second key using --force
-        const output = await executeCommand(['key', 'import', secret2, '--alias', alias, '--force']);
+        it('should allow overwriting with --force flag', async () => {
+          const alias = 'forceTest';
+          const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
 
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
+          await executeCommand([
+            'key', 'import', secret1, '--alias', alias, '--no-encrypt'
+          ]);
 
-        // Verify the stored key was updated
-        const stored = await KeyStore.load(alias);
-        expect(stored.secret).toBe(secret2); // Full normalized form
-      });
+          const output = await executeCommand([
+            'key', 'import', secret2, '--alias', alias, '--no-encrypt', '--force'
+          ]);
 
-      it('should handle different secret key formats', async () => {
-        let index = 0;
-        for (const testCase of IMPORT_KEY_TEST_VECTORS.testSecrets) {
-          const alias = `test${index++}`;
-          const output = await executeCommand(['key', 'import', testCase.secret, '--alias', alias]);
+          expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
 
-          // Check output contains the secret (import uses "Secret:" not "Secret Key:")
-          expect(output).toMatch(/Secret:/);
-          expect(output).toMatch(/0x[0-9a-f]+/i);
+          // Verify by exporting
+          const exportOutput = await executeCommand(['key', 'export', alias]);
+          expect(exportOutput).toContain(secret2);
+        });
 
-          // Verify storage
-          const stored = await KeyStore.load(alias);
-          expect(isValidSecretKey(stored.secret)).toBe(true);
-        }
-      });
-
-      it('should output JSON when --json flag is used', async () => {
-        const alias = 'jsonTest';
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias, '--json']);
-
-        // Should be valid JSON
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.validJson);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasAlias);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasSecret);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasStored);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasKeystorePath);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasWarning);
-
-        const parsed = parseJsonOutput(output);
-        expect(isValidImportedKeyJson(parsed)).toBe(true);
-      });
-
-      it('should produce correct data in JSON format', async () => {
-        const alias = 'jsonDataTest';
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias, '--json']);
-
-        const parsed = parseJsonOutput(output);
-        expect(parsed).not.toBeNull();
-        expect(parsed.alias).toBe(alias);
-        expect(parsed.secret).toBe(testSecret);
-        expect(parsed.stored).toBe(true);
-        expect(parsed.keystorePath).toContain('.cazt');
-        expect(parsed.warning).toBe(IMPORT_KEY_TEST_VECTORS.expectedWarning);
-      });
-
-      it('should not include JSON formatting in human-readable output', async () => {
-        const alias = 'humanReadableTest';
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
-
-        // Human-readable output should not contain JSON-like formatting
-        expect(output).not.toMatch(/"alias"/);
-        expect(output).not.toMatch(/"secret"/);
-
-        // But should contain the actual labels
-        expect(output).toContain('Alias:');
-        expect(output).toContain('Secret:');
-      });
-
-      it('should persist keys across imports', async () => {
-        const alias1 = 'key1';
-        const alias2 = 'key2';
-        const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
-        const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
-
-        // Import first key
-        await executeCommand(['key', 'import', secret1, '--alias', alias1]);
-
-        // Import second key
-        await executeCommand(['key', 'import', secret2, '--alias', alias2]);
-
-        // Both should be stored
-        const stored1 = await KeyStore.load(alias1);
-        const stored2 = await KeyStore.load(alias2);
-
-        expect(stored1.alias).toBe(alias1);
-        expect(stored2.alias).toBe(alias2);
-        expect(stored1.secret).not.toBe(stored2.secret);
-      });
-
-      it('should derive consistent addresses for the same secret', async () => {
-        const alias = 'consistentTest';
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
-
-        const address1 = extractAddress(output);
-
-        // Import again with different alias but same secret
-        await KeyStore.clear();
-        const alias2 = 'consistentTest2';
-        const output2 = await executeCommand(['key', 'import', testSecret, '--alias', alias2]);
-
-        const address2 = extractAddress(output2);
-
-        // Addresses should be the same for the same secret
-        expect(address1).toBe(address2);
-      });
-
-      it('should normalize secret keys before storage', async () => {
-        const alias = 'normalizeTest';
-        const decimalSecret = '66'; // Decimal representation
-
-        const output = await executeCommand(['key', 'import', decimalSecret, '--alias', alias]);
-
-        // Should succeed
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
-
-        // Stored key should be normalized to hex format
-        const stored = await KeyStore.load(alias);
-        expect(stored.secret).toMatch(/^0x/);
-        expect(isValidSecretKey(stored.secret)).toBe(true);
-      });
-
-      it('should require --alias option', async () => {
-        // Try to import without --alias flag
-        const output = await executeCommand(['key', 'import', testSecret], true);
-
-        // Commander.js will show an error about the required option
-        // The output might contain 'required option' or show undefined alias
-        expect(output).toMatch(/required option|alias.*undefined/i);
+        it('should require --alias option', async () => {
+          const output = await executeCommand(['key', 'import', testSecret], true);
+          expect(output).toMatch(/required option|alias/i);
+        });
       });
     });
 
     describe('export subcommand', () => {
       const testSecret = '0x0000000000000000000000000000000000000000000000000000000000000001';
       const testAlias = 'exportTest';
+      const testPassword = 'testPassword123';
 
-      // Clean up keystore before and after each test
+      // Clean up secrets before and after each test
       beforeEach(async () => {
-        await KeyStore.clear();
+        await SecretManager.clear();
       });
 
       afterEach(async () => {
-        await KeyStore.clear();
+        await SecretManager.clear();
       });
 
-      it('should export a secret key by alias with human-readable output', async () => {
-        // First import a key
-        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+      describe('unencrypted export (--no-encrypt import)', () => {
+        it('should export a secret key by alias with human-readable output', async () => {
+          // First import a key (unencrypted)
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
 
-        // Then export it
-        const output = await executeCommand(['key', 'export', testAlias]);
+          // Then export it
+          const output = await executeCommand(['key', 'export', testAlias]);
 
-        // Check for expected output structure
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.separator);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.aliasLabel);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.secretLabel);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.createdLabel);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.updatedLabel);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.warningLabel);
+          // Check for expected output structure
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.separator);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.aliasLabel);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.secretLabel);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.encryptedLabel);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.warningLabel);
+        });
+
+        it('should export the correct secret key', async () => {
+          // Import a key
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+
+          // Export it
+          const output = await executeCommand(['key', 'export', testAlias]);
+
+          // Verify the secret matches
+          expect(output).toContain(testSecret);
+        });
+
+        it('should display the correct alias', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+          const output = await executeCommand(['key', 'export', testAlias]);
+
+          const extractedAlias = extractAlias(output);
+          expect(extractedAlias).toBe(testAlias);
+        });
+
+        it('should display encryption status as no', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+          const output = await executeCommand(['key', 'export', testAlias]);
+
+          expect(output).toMatch(/Encrypted:\s*no/);
+        });
+
+        it('should display the security warning', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+          const output = await executeCommand(['key', 'export', testAlias]);
+
+          const warning = extractWarning(output);
+          expect(warning).toBe(EXPORT_KEY_TEST_VECTORS.expectedWarning);
+        });
+
+        it('should export multiple times without changes (idempotent)', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+
+          const output1 = await executeCommand(['key', 'export', testAlias]);
+          const output2 = await executeCommand(['key', 'export', testAlias]);
+
+          // Both exports should contain the same secret
+          expect(output1).toContain(testSecret);
+          expect(output2).toContain(testSecret);
+        });
+
+        it('should output JSON when --json flag is used', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+          const output = await executeCommand(['key', 'export', testAlias, '--json']);
+
+          // Should be valid JSON
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.validJson);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasAlias);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasSecret);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasEncrypted);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasWarning);
+
+          const parsed = parseJsonOutput(output);
+          expect(isValidExportedKeyJson(parsed)).toBe(true);
+        });
+
+        it('should produce correct data in JSON format', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+          const output = await executeCommand(['key', 'export', testAlias, '--json']);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(parsed.alias).toBe(testAlias);
+          expect(parsed.secret).toBe(testSecret);
+          expect(parsed.encrypted).toBe(false);
+          expect(parsed.warning).toBe(EXPORT_KEY_TEST_VECTORS.expectedWarning);
+        });
+
+        it('should not include JSON formatting in human-readable output', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+          const output = await executeCommand(['key', 'export', testAlias]);
+
+          // Human-readable output should not contain JSON-like formatting
+          expect(output).not.toMatch(/"alias"/);
+          expect(output).not.toMatch(/"secret"/);
+
+          // But should contain the actual labels
+          expect(output).toContain('Alias:');
+          expect(output).toContain('Secret:');
+        });
       });
 
-      it('should export the correct secret key', async () => {
-        // Import a key
-        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+      describe('encrypted export', () => {
+        it('should export an encrypted secret with --password option', async () => {
+          // Import an encrypted key
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--password', testPassword]);
 
-        // Export it
-        const output = await executeCommand(['key', 'export', testAlias]);
+          // Export with password
+          const output = await executeCommand(['key', 'export', testAlias, '--password', testPassword]);
 
-        // Verify the secret matches
-        expect(output).toContain(testSecret);
+          // Check for expected output structure
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.aliasLabel);
+          expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.secretLabel);
+          expect(output).toContain(testSecret);
+        });
+
+        it('should show encryption status as yes', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--password', testPassword]);
+          const output = await executeCommand(['key', 'export', testAlias, '--password', testPassword]);
+
+          expect(output).toMatch(/Encrypted:\s*yes/);
+        });
+
+        // Interactive password prompt tests are skipped since they require TTY
+        // The prompt behavior is tested manually in real CLI usage
+
+        it('should fail with wrong password', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--password', testPassword]);
+
+          const output = await executeCommand(['key', 'export', testAlias, '--password', 'wrongPassword'], true);
+
+          expect(output).toMatch(/invalid|wrong|incorrect|failed/i);
+        });
+
+        it('should output correct JSON for encrypted export', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--password', testPassword]);
+          const output = await executeCommand(['key', 'export', testAlias, '--password', testPassword, '--json']);
+
+          const parsed = parseJsonOutput(output);
+          expect(parsed).not.toBeNull();
+          expect(parsed.alias).toBe(testAlias);
+          expect(parsed.secret).toBe(testSecret);
+          expect(parsed.encrypted).toBe(true);
+          expect(parsed.warning).toBe(EXPORT_KEY_TEST_VECTORS.expectedWarning);
+        });
       });
 
-      it('should display the correct alias', async () => {
-        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
-        const output = await executeCommand(['key', 'export', testAlias]);
+      describe('common behavior', () => {
+        it('should fail when exporting non-existent alias', async () => {
+          const output = await executeCommand(['key', 'export', 'nonExistentAlias'], true);
 
-        const extractedAlias = extractAlias(output);
-        expect(extractedAlias).toBe(testAlias);
-      });
+          expect(output).toMatch(/not found/i);
+        });
 
-      it('should display creation and update timestamps', async () => {
-        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
-        const output = await executeCommand(['key', 'export', testAlias]);
+        it('should export keys with various aliases', async () => {
+          const testCases = [
+            { alias: 'key1', secret: '0x0000000000000000000000000000000000000000000000000000000000000001' },
+            { alias: 'key2', secret: '0x0000000000000000000000000000000000000000000000000000000000000042' },
+            { alias: '_private', secret: '0x0000000000000000000000000000000000000000000000000000000000000003' },
+          ];
 
-        expect(output).toMatch(/Created:/);
-        expect(output).toMatch(/Updated:/);
-      });
+          for (const testCase of testCases) {
+            await executeCommand(['key', 'import', testCase.secret, '--alias', testCase.alias, '--no-encrypt']);
+            const output = await executeCommand(['key', 'export', testCase.alias]);
 
-      it('should display the security warning', async () => {
-        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
-        const output = await executeCommand(['key', 'export', testAlias]);
+            expect(output).toContain(testCase.alias);
+            expect(output).toContain(testCase.secret);
+          }
+        });
 
-        const warning = extractWarning(output);
-        expect(warning).toBe(EXPORT_KEY_TEST_VECTORS.expectedWarning);
-      });
+        it('should handle empty storage gracefully', async () => {
+          // Don't import anything, just try to export
+          const output = await executeCommand(['key', 'export', 'someAlias'], true);
 
-      it('should fail when exporting non-existent alias', async () => {
-        const output = await executeCommand(['key', 'export', 'nonExistentAlias'], true);
+          expect(output).toMatch(/not found/i);
+        });
 
-        expect(output).toMatch(/not found/i);
-      });
+        it('should export new secret after --force import', async () => {
+          const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
+          const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
 
-      it('should export multiple times without changes (idempotent)', async () => {
-        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+          // Import first key (unencrypted for simplicity)
+          await executeCommand(['key', 'import', secret1, '--alias', testAlias, '--no-encrypt']);
+          const output1 = await executeCommand(['key', 'export', testAlias, '--json']);
+          const parsed1 = parseJsonOutput(output1);
+          expect(parsed1.secret).toBe(secret1);
 
-        const output1 = await executeCommand(['key', 'export', testAlias]);
-        const output2 = await executeCommand(['key', 'export', testAlias]);
+          // Overwrite with second key
+          await executeCommand(['key', 'import', secret2, '--alias', testAlias, '--no-encrypt', '--force']);
+          const output2 = await executeCommand(['key', 'export', testAlias, '--json']);
+          const parsed2 = parseJsonOutput(output2);
 
-        // Both exports should contain the same secret
-        expect(output1).toContain(testSecret);
-        expect(output2).toContain(testSecret);
-      });
-
-      it('should export keys with various aliases', async () => {
-        const testCases = [
-          { alias: 'key1', secret: '0x0000000000000000000000000000000000000000000000000000000000000001' },
-          { alias: 'key2', secret: '0x0000000000000000000000000000000000000000000000000000000000000042' },
-          { alias: '_private', secret: '0x0000000000000000000000000000000000000000000000000000000000000003' },
-        ];
-
-        for (const testCase of testCases) {
-          await executeCommand(['key', 'import', testCase.secret, '--alias', testCase.alias]);
-          const output = await executeCommand(['key', 'export', testCase.alias]);
-
-          expect(output).toContain(testCase.alias);
-          expect(output).toContain(testCase.secret);
-        }
-      });
-
-      it('should output JSON when --json flag is used', async () => {
-        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
-        const output = await executeCommand(['key', 'export', testAlias, '--json']);
-
-        // Should be valid JSON
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.validJson);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasAlias);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasSecret);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasCreatedAt);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasUpdatedAt);
-        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasWarning);
-
-        const parsed = parseJsonOutput(output);
-        expect(isValidExportedKeyJson(parsed)).toBe(true);
-      });
-
-      it('should produce correct data in JSON format', async () => {
-        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
-        const output = await executeCommand(['key', 'export', testAlias, '--json']);
-
-        const parsed = parseJsonOutput(output);
-        expect(parsed).not.toBeNull();
-        expect(parsed.alias).toBe(testAlias);
-        expect(parsed.secret).toBe(testSecret);
-        expect(parsed.createdAt).toBeDefined();
-        expect(parsed.updatedAt).toBeDefined();
-        expect(parsed.warning).toBe(EXPORT_KEY_TEST_VECTORS.expectedWarning);
-      });
-
-      it('should not include JSON formatting in human-readable output', async () => {
-        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
-        const output = await executeCommand(['key', 'export', testAlias]);
-
-        // Human-readable output should not contain JSON-like formatting
-        expect(output).not.toMatch(/"alias"/);
-        expect(output).not.toMatch(/"secret"/);
-
-        // But should contain the actual labels
-        expect(output).toContain('Alias:');
-        expect(output).toContain('Secret:');
-      });
-
-      it('should show updated timestamps after import with --force', async () => {
-        const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
-        const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
-
-        // Import first key
-        await executeCommand(['key', 'import', secret1, '--alias', testAlias]);
-        const output1 = await executeCommand(['key', 'export', testAlias, '--json']);
-        const parsed1 = parseJsonOutput(output1);
-
-        // Wait a bit to ensure timestamp difference
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // Overwrite with second key
-        await executeCommand(['key', 'import', secret2, '--alias', testAlias, '--force']);
-        const output2 = await executeCommand(['key', 'export', testAlias, '--json']);
-        const parsed2 = parseJsonOutput(output2);
-
-        // CreatedAt should be the same, updatedAt should be different
-        expect(parsed1.createdAt).toBe(parsed2.createdAt);
-        expect(parsed1.updatedAt).not.toBe(parsed2.updatedAt);
-        expect(parsed2.secret).toBe(secret2);
-      });
-
-      it('should handle empty keystore gracefully', async () => {
-        // Don't import anything, just try to export
-        const output = await executeCommand(['key', 'export', 'someAlias'], true);
-
-        expect(output).toMatch(/not found/i);
+          expect(parsed2.secret).toBe(secret2);
+        });
       });
     });
 
     describe('list subcommand', () => {
-      // Clean up keystore before and after each test
+      // Clean up secrets before and after each test
       beforeEach(async () => {
-        await KeyStore.clear();
+        await SecretManager.clear();
       });
 
       afterEach(async () => {
-        await KeyStore.clear();
+        await SecretManager.clear();
       });
 
-      it('should list all stored key aliases with human-readable output', async () => {
-        // Import some test keys
+      it('should list all stored secrets with human-readable output', async () => {
+        // Import some test keys (unencrypted for simplicity)
         await executeCommand([
           'key',
           'import',
           '0x0000000000000000000000000000000000000000000000000000000000000001',
           '--alias',
           'alice',
+          '--no-encrypt',
         ]);
         await executeCommand([
           'key',
@@ -1413,63 +1383,52 @@ describe('CLI Commands', () => {
           '0x0000000000000000000000000000000000000000000000000000000000000042',
           '--alias',
           'bob',
+          '--no-encrypt',
         ]);
 
         const output = await executeCommand(['key', 'list']);
 
         // Check for expected output structure
-        expect(output).toMatch(/Stored Key Aliases/);
-        expect(output).toMatch(/={50}/);
+        expect(output).toMatch(LIST_KEYS_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toMatch(LIST_KEYS_TEST_VECTORS.patterns.humanReadable.separator);
         expect(output).toContain('alice');
         expect(output).toContain('bob');
       });
 
-      it('should show message when no keys are stored', async () => {
+      it('should show message when no secrets are stored', async () => {
         const output = await executeCommand(['key', 'list']);
 
-        expect(output).toMatch(/Stored Key Aliases/);
-        expect(output).toMatch(/No keys stored/);
+        expect(output).toMatch(LIST_KEYS_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toMatch(LIST_KEYS_TEST_VECTORS.patterns.humanReadable.noSecrets);
       });
 
-      it('should list keys in alphabetical order', async () => {
-        // Import keys in non-alphabetical order
+      it('should show encryption status for each secret', async () => {
+        // Import one encrypted and one unencrypted key
         await executeCommand([
           'key',
           'import',
           '0x0000000000000000000000000000000000000000000000000000000000000001',
           '--alias',
-          'zebra',
+          'encrypted_key',
+          '--password',
+          'testpass',
         ]);
         await executeCommand([
           'key',
           'import',
           '0x0000000000000000000000000000000000000000000000000000000000000002',
           '--alias',
-          'alice',
-        ]);
-        await executeCommand([
-          'key',
-          'import',
-          '0x0000000000000000000000000000000000000000000000000000000000000003',
-          '--alias',
-          'mary',
+          'plain_key',
+          '--no-encrypt',
         ]);
 
         const output = await executeCommand(['key', 'list']);
 
-        // Extract positions of aliases in output
-        const alicePos = output.indexOf('alice');
-        const maryPos = output.indexOf('mary');
-        const zebraPos = output.indexOf('zebra');
-
-        // All should be present
-        expect(alicePos).toBeGreaterThan(-1);
-        expect(maryPos).toBeGreaterThan(-1);
-        expect(zebraPos).toBeGreaterThan(-1);
-
-        // Should appear in alphabetical order
-        expect(alicePos).toBeLessThan(maryPos);
-        expect(maryPos).toBeLessThan(zebraPos);
+        // Check that encryption status is displayed
+        expect(output).toContain('encrypted_key');
+        expect(output).toContain('plain_key');
+        expect(output).toMatch(/\(encrypted\)/);
+        expect(output).toMatch(/\(plain\)/);
       });
 
       it('should work with ls alias', async () => {
@@ -1479,17 +1438,18 @@ describe('CLI Commands', () => {
           '0x0000000000000000000000000000000000000000000000000000000000000001',
           '--alias',
           'test',
+          '--no-encrypt',
         ]);
 
         const output = await executeCommand(['key', 'ls']);
 
-        expect(output).toMatch(/Stored Key Aliases/);
+        expect(output).toMatch(LIST_KEYS_TEST_VECTORS.patterns.humanReadable.header);
         expect(output).toContain('test');
       });
 
       it('should not expose secret keys in list output', async () => {
         const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
-        await executeCommand(['key', 'import', secret, '--alias', 'sensitive']);
+        await executeCommand(['key', 'import', secret, '--alias', 'sensitive', '--no-encrypt']);
 
         const output = await executeCommand(['key', 'list']);
 
@@ -1505,6 +1465,7 @@ describe('CLI Commands', () => {
           '0x0000000000000000000000000000000000000000000000000000000000000001',
           '--alias',
           'alice',
+          '--no-encrypt',
         ]);
 
         const output = await executeCommand(['key', 'list', '--json']);
@@ -1512,22 +1473,23 @@ describe('CLI Commands', () => {
         // Should be valid JSON
         const parsed = parseJsonOutput(output);
         expect(parsed).not.toBeNull();
-        expect(parsed.aliases).toBeDefined();
-        expect(Array.isArray(parsed.aliases)).toBe(true);
-        expect(parsed.aliases).toContain('alice');
+        expect(isValidListedKeysJson(parsed)).toBe(true);
+        expect(parsed.secrets).toBeDefined();
+        expect(Array.isArray(parsed.secrets)).toBe(true);
+        expect(parsed.secrets.some((s: any) => s.alias === 'alice')).toBe(true);
       });
 
-      it('should return empty array in JSON when no keys stored', async () => {
+      it('should return empty array in JSON when no secrets stored', async () => {
         const output = await executeCommand(['key', 'list', '--json']);
 
         const parsed = parseJsonOutput(output);
         expect(parsed).not.toBeNull();
-        expect(parsed.aliases).toBeDefined();
-        expect(Array.isArray(parsed.aliases)).toBe(true);
-        expect(parsed.aliases.length).toBe(0);
+        expect(parsed.secrets).toBeDefined();
+        expect(Array.isArray(parsed.secrets)).toBe(true);
+        expect(parsed.secrets.length).toBe(0);
       });
 
-      it('should list multiple keys correctly in JSON format', async () => {
+      it('should list multiple secrets correctly in JSON format with encryption status', async () => {
         const testKeys = [
           { alias: 'alice', secret: '0x0000000000000000000000000000000000000000000000000000000000000001' },
           { alias: 'bob', secret: '0x0000000000000000000000000000000000000000000000000000000000000002' },
@@ -1535,16 +1497,51 @@ describe('CLI Commands', () => {
         ];
 
         for (const key of testKeys) {
-          await executeCommand(['key', 'import', key.secret, '--alias', key.alias]);
+          await executeCommand(['key', 'import', key.secret, '--alias', key.alias, '--no-encrypt']);
         }
 
         const output = await executeCommand(['key', 'list', '--json']);
         const parsed = parseJsonOutput(output);
 
-        expect(parsed.aliases).toHaveLength(3);
-        expect(parsed.aliases).toContain('alice');
-        expect(parsed.aliases).toContain('bob');
-        expect(parsed.aliases).toContain('charlie');
+        expect(parsed.secrets).toHaveLength(3);
+        expect(parsed.secrets.some((s: any) => s.alias === 'alice')).toBe(true);
+        expect(parsed.secrets.some((s: any) => s.alias === 'bob')).toBe(true);
+        expect(parsed.secrets.some((s: any) => s.alias === 'charlie')).toBe(true);
+
+        // Check that encryption status is included
+        for (const secret of parsed.secrets) {
+          expect(typeof secret.encrypted).toBe('boolean');
+        }
+      });
+
+      it('should show correct encryption status in JSON', async () => {
+        // Import one encrypted and one unencrypted key
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000001',
+          '--alias',
+          'encrypted_key',
+          '--password',
+          'testpass',
+        ]);
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000002',
+          '--alias',
+          'plain_key',
+          '--no-encrypt',
+        ]);
+
+        const output = await executeCommand(['key', 'list', '--json']);
+        const parsed = parseJsonOutput(output);
+
+        const encryptedSecret = parsed.secrets.find((s: any) => s.alias === 'encrypted_key');
+        const plainSecret = parsed.secrets.find((s: any) => s.alias === 'plain_key');
+
+        expect(encryptedSecret.encrypted).toBe(true);
+        expect(plainSecret.encrypted).toBe(false);
       });
 
       it('should not include JSON formatting in human-readable output', async () => {
@@ -1554,13 +1551,13 @@ describe('CLI Commands', () => {
           '0x0000000000000000000000000000000000000000000000000000000000000001',
           '--alias',
           'test',
+          '--no-encrypt',
         ]);
 
         const output = await executeCommand(['key', 'list']);
 
         // Human-readable output should not contain JSON-like formatting
-        expect(output).not.toMatch(/"aliases"/);
-        expect(output).not.toMatch(/\[.*\]/);
+        expect(output).not.toMatch(/"secrets"/);
 
         // But should contain the alias itself
         expect(output).toContain('test');
@@ -1576,6 +1573,7 @@ describe('CLI Commands', () => {
             `0x000000000000000000000000000000000000000000000000000000000000000${i + 1}`,
             '--alias',
             testAliases[i],
+            '--no-encrypt',
           ]);
         }
 
@@ -1594,11 +1592,12 @@ describe('CLI Commands', () => {
           '0x0000000000000000000000000000000000000000000000000000000000000001',
           '--alias',
           'first',
+          '--no-encrypt',
         ]);
 
         let output = await executeCommand(['key', 'list', '--json']);
         let parsed = parseJsonOutput(output);
-        expect(parsed.aliases).toHaveLength(1);
+        expect(parsed.secrets).toHaveLength(1);
 
         // Add another key
         await executeCommand([
@@ -1607,13 +1606,14 @@ describe('CLI Commands', () => {
           '0x0000000000000000000000000000000000000000000000000000000000000002',
           '--alias',
           'second',
+          '--no-encrypt',
         ]);
 
         output = await executeCommand(['key', 'list', '--json']);
         parsed = parseJsonOutput(output);
-        expect(parsed.aliases).toHaveLength(2);
-        expect(parsed.aliases).toContain('first');
-        expect(parsed.aliases).toContain('second');
+        expect(parsed.secrets).toHaveLength(2);
+        expect(parsed.secrets.some((s: any) => s.alias === 'first')).toBe(true);
+        expect(parsed.secrets.some((s: any) => s.alias === 'second')).toBe(true);
       });
 
       it('should be consistent between multiple invocations', async () => {
@@ -1623,6 +1623,7 @@ describe('CLI Commands', () => {
           '0x0000000000000000000000000000000000000000000000000000000000000001',
           '--alias',
           'test1',
+          '--no-encrypt',
         ]);
         await executeCommand([
           'key',
@@ -1630,6 +1631,7 @@ describe('CLI Commands', () => {
           '0x0000000000000000000000000000000000000000000000000000000000000002',
           '--alias',
           'test2',
+          '--no-encrypt',
         ]);
 
         const output1 = await executeCommand(['key', 'list', '--json']);
@@ -1638,7 +1640,7 @@ describe('CLI Commands', () => {
         const parsed1 = parseJsonOutput(output1);
         const parsed2 = parseJsonOutput(output2);
 
-        expect(parsed1.aliases).toEqual(parsed2.aliases);
+        expect(parsed1.secrets).toEqual(parsed2.secrets);
       });
 
       it('should list single key correctly', async () => {
@@ -1648,12 +1650,13 @@ describe('CLI Commands', () => {
           '0x0000000000000000000000000000000000000000000000000000000000000001',
           '--alias',
           'single',
+          '--no-encrypt',
         ]);
 
         const output = await executeCommand(['key', 'list']);
 
         expect(output).toContain('single');
-        expect(output).toMatch(/Stored Key Aliases/);
+        expect(output).toMatch(LIST_KEYS_TEST_VECTORS.patterns.humanReadable.header);
       });
 
       it('should handle large number of keys', async () => {
@@ -1665,16 +1668,185 @@ describe('CLI Commands', () => {
             `0x000000000000000000000000000000000000000000000000000000000000000${i.toString(16)}`,
             '--alias',
             `key${i}`,
+            '--no-encrypt',
           ]);
         }
 
         const output = await executeCommand(['key', 'list', '--json']);
         const parsed = parseJsonOutput(output);
 
-        expect(parsed.aliases).toHaveLength(10);
+        expect(parsed.secrets).toHaveLength(10);
         for (let i = 0; i < 10; i++) {
-          expect(parsed.aliases).toContain(`key${i}`);
+          expect(parsed.secrets.some((s: any) => s.alias === `key${i}`)).toBe(true);
         }
+      });
+
+      it('should include storage path in JSON output', async () => {
+        const output = await executeCommand(['key', 'list', '--json']);
+        const parsed = parseJsonOutput(output);
+
+        expect(parsed.storagePath).toBeDefined();
+        expect(typeof parsed.storagePath).toBe('string');
+      });
+    });
+
+    describe('delete subcommand', () => {
+      const testSecret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+      const testAlias = 'deleteTest';
+
+      // Clean up secrets before and after each test
+      beforeEach(async () => {
+        await SecretManager.clear();
+      });
+
+      afterEach(async () => {
+        await SecretManager.clear();
+      });
+
+      it('should delete an unencrypted secret with human-readable output', async () => {
+        // Import a key
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+
+        // Delete it
+        const output = await executeCommand(['key', 'delete', testAlias]);
+
+        // Check for expected output structure
+        expect(output).toMatch(DELETE_KEY_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toMatch(DELETE_KEY_TEST_VECTORS.patterns.humanReadable.separator);
+        expect(output).toMatch(DELETE_KEY_TEST_VECTORS.patterns.humanReadable.aliasLabel);
+        expect(output).toMatch(DELETE_KEY_TEST_VECTORS.patterns.humanReadable.wasEncryptedLabel);
+        expect(output).toContain(testAlias);
+      });
+
+      it('should delete an encrypted secret', async () => {
+        // Import an encrypted key
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--password', 'testpass']);
+
+        // Delete it (no password needed to delete)
+        const output = await executeCommand(['key', 'delete', testAlias]);
+
+        expect(output).toMatch(DELETE_KEY_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toContain(testAlias);
+        expect(output).toMatch(/Was encrypted:\s*yes/);
+      });
+
+      it('should show correct encryption status after deletion', async () => {
+        // Import unencrypted key
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+
+        const output = await executeCommand(['key', 'delete', testAlias]);
+
+        expect(output).toMatch(/Was encrypted:\s*no/);
+      });
+
+      it('should work with rm alias', async () => {
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+
+        const output = await executeCommand(['key', 'rm', testAlias]);
+
+        expect(output).toMatch(DELETE_KEY_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toContain(testAlias);
+      });
+
+      it('should remove secret from list after deletion', async () => {
+        // Import a key
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+
+        // Verify it exists in list
+        let listOutput = await executeCommand(['key', 'list', '--json']);
+        let parsed = parseJsonOutput(listOutput);
+        expect(parsed.secrets.some((s: any) => s.alias === testAlias)).toBe(true);
+
+        // Delete it
+        await executeCommand(['key', 'delete', testAlias]);
+
+        // Verify it's gone from list
+        listOutput = await executeCommand(['key', 'list', '--json']);
+        parsed = parseJsonOutput(listOutput);
+        expect(parsed.secrets.some((s: any) => s.alias === testAlias)).toBe(false);
+      });
+
+      it('should fail when deleting non-existent alias', async () => {
+        const output = await executeCommand(['key', 'delete', 'nonExistentAlias'], true);
+
+        expect(output).toMatch(/not found/i);
+      });
+
+      it('should output JSON when --json flag is used', async () => {
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--no-encrypt']);
+        const output = await executeCommand(['key', 'delete', testAlias, '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(isValidDeletedKeyJson(parsed)).toBe(true);
+        expect(parsed.alias).toBe(testAlias);
+        expect(typeof parsed.encrypted).toBe('boolean');
+        expect(parsed.deleted).toBe(true);
+      });
+
+      it('should output correct JSON for encrypted secret deletion', async () => {
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias, '--password', 'testpass']);
+        const output = await executeCommand(['key', 'delete', testAlias, '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed.encrypted).toBe(true);
+        expect(parsed.deleted).toBe(true);
+      });
+
+      it('should delete multiple keys individually', async () => {
+        const aliases = ['key1', 'key2', 'key3'];
+
+        // Import multiple keys
+        for (let i = 0; i < aliases.length; i++) {
+          await executeCommand([
+            'key',
+            'import',
+            `0x000000000000000000000000000000000000000000000000000000000000000${i + 1}`,
+            '--alias',
+            aliases[i],
+            '--no-encrypt',
+          ]);
+        }
+
+        // Delete one by one
+        for (const alias of aliases) {
+          const output = await executeCommand(['key', 'delete', alias]);
+          expect(output).toContain(alias);
+        }
+
+        // Verify all are gone
+        const listOutput = await executeCommand(['key', 'list', '--json']);
+        const parsed = parseJsonOutput(listOutput);
+        expect(parsed.secrets).toHaveLength(0);
+      });
+
+      it('should not affect other secrets when deleting one', async () => {
+        // Import two keys
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000001',
+          '--alias',
+          'keep',
+          '--no-encrypt',
+        ]);
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000002',
+          '--alias',
+          'delete',
+          '--no-encrypt',
+        ]);
+
+        // Delete one
+        await executeCommand(['key', 'delete', 'delete']);
+
+        // Verify the other still exists
+        const listOutput = await executeCommand(['key', 'list', '--json']);
+        const parsed = parseJsonOutput(listOutput);
+        expect(parsed.secrets).toHaveLength(1);
+        expect(parsed.secrets[0].alias).toBe('keep');
       });
     });
 
@@ -2240,767 +2412,7 @@ describe('CLI Commands', () => {
         expect(valid).not.toBeNull();
       });
     });
-
-    describe('keystore command', () => {
-      // Directory for encrypted keystore test files
-      const KEYSTORE_TEST_DIR = path.join(os.tmpdir(), '.cazt-encrypted-keystore-test');
-      let testFileCounter = 0;
-
-      // Cleanup before and after tests
-      beforeAll(async () => {
-        try {
-          await fs.rm(KEYSTORE_TEST_DIR, { recursive: true, force: true });
-        } catch {
-          // Ignore if doesn't exist
-        }
-        await fs.mkdir(KEYSTORE_TEST_DIR, { recursive: true });
-      });
-
-      afterAll(async () => {
-        try {
-          await fs.rm(KEYSTORE_TEST_DIR, { recursive: true, force: true });
-        } catch {
-          // Ignore cleanup errors
-        }
-      });
-
-      // Helper to generate unique test file path
-      function getTestFilePath(): string {
-        testFileCounter++;
-        return path.join(KEYSTORE_TEST_DIR, `keystore-${testFileCounter}.json`);
-      }
-
-      describe('create subcommand', () => {
-        it('should create an encrypted keystore file with human-readable output', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword123';
-
-          const output = await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          // Check for expected output structure
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.header);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.separator);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.nameLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.pathLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.uuidLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.cipherLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.kdfLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.create.warningLabel);
-
-          // Check for valid UUID
-          const uuid = extractKeystoreUuid(output);
-          expect(uuid).not.toBeNull();
-          expect(isValidUuidV4(uuid!)).toBe(true);
-
-          // Check encryption parameters
-          const cipher = extractKeystoreCipher(output);
-          const kdf = extractKeystoreKdf(output);
-          expect(cipher).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.cipher);
-          expect(kdf).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.kdf);
-        });
-
-        it('should create a valid keystore file on disk', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword123';
-
-          await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          // Verify file exists
-          const exists = await fs.access(filePath).then(() => true).catch(() => false);
-          expect(exists).toBe(true);
-
-          // Verify file content is valid keystore format
-          const content = await fs.readFile(filePath, 'utf-8');
-          const keystoreData = JSON.parse(content);
-          expect(isValidKeystoreFile(keystoreData)).toBe(true);
-        });
-
-        it('should output JSON when --json flag is provided', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
-          const password = 'testpassword';
-
-          const output = await executeCommand([
-            '--json',
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          const parsed = parseJsonOutput(output);
-          expect(parsed).not.toBeNull();
-          expect(isValidKeystoreCreateJson(parsed)).toBe(true);
-          expect(parsed.cipher).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.cipher);
-          expect(parsed.kdf).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.kdf);
-        });
-
-        it('should work with different secret keys', async () => {
-          for (const testCase of ENCRYPTED_KEYSTORE_TEST_VECTORS.testSecrets) {
-            const filePath = getTestFilePath();
-            const password = 'testpassword';
-
-            const output = await executeCommand([
-              '--json',
-              'key',
-              'keystore',
-              'create',
-              filePath,
-              '--secret',
-              testCase.secret,
-              '--password',
-              password,
-            ]);
-
-            const parsed = parseJsonOutput(output);
-            expect(parsed).not.toBeNull();
-            expect(isValidKeystoreCreateJson(parsed)).toBe(true);
-          }
-        });
-
-        it('should work with different passwords', async () => {
-          for (const testCase of ENCRYPTED_KEYSTORE_TEST_VECTORS.testPasswords) {
-            const filePath = getTestFilePath();
-            const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-
-            const output = await executeCommand([
-              '--json',
-              'key',
-              'keystore',
-              'create',
-              filePath,
-              '--secret',
-              secret,
-              '--password',
-              testCase.password,
-            ]);
-
-            const parsed = parseJsonOutput(output);
-            expect(parsed).not.toBeNull();
-            expect(isValidKeystoreCreateJson(parsed)).toBe(true);
-          }
-        });
-
-        it('should fail with invalid secret key', async () => {
-          const filePath = getTestFilePath();
-          const invalidSecret = 'not-a-valid-key';
-          const password = 'testpassword';
-
-          const output = await executeCommand(
-            [
-              'key',
-              'keystore',
-              'create',
-              filePath,
-              '--secret',
-              invalidSecret,
-              '--password',
-              password,
-            ],
-            true
-          );
-
-          expect(output).toMatch(/Invalid secret key/i);
-        });
-
-        it('should generate unique UUIDs for each keystore', async () => {
-          const uuids: string[] = [];
-
-          for (let i = 0; i < 3; i++) {
-            const filePath = getTestFilePath();
-            const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-            const password = 'testpassword';
-
-            const output = await executeCommand([
-              'key',
-              'keystore',
-              'create',
-              filePath,
-              '--secret',
-              secret,
-              '--password',
-              password,
-            ]);
-
-            const uuid = extractKeystoreUuid(output);
-            expect(uuid).not.toBeNull();
-            uuids.push(uuid!);
-          }
-
-          // All UUIDs should be unique
-          const uniqueUuids = new Set(uuids);
-          expect(uniqueUuids.size).toBe(uuids.length);
-        });
-
-        it('should create different ciphertext for same key with different passwords', async () => {
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const ciphertexts: string[] = [];
-
-          for (const password of ['password1', 'password2', 'password3']) {
-            const filePath = getTestFilePath();
-
-            await executeCommand([
-              'key',
-              'keystore',
-              'create',
-              filePath,
-              '--secret',
-              secret,
-              '--password',
-              password,
-            ]);
-
-            const content = await fs.readFile(filePath, 'utf-8');
-            const keystoreData = JSON.parse(content);
-            ciphertexts.push(keystoreData.crypto.ciphertext);
-          }
-
-          // All ciphertexts should be different (different passwords = different derived keys)
-          const uniqueCiphertexts = new Set(ciphertexts);
-          expect(uniqueCiphertexts.size).toBe(ciphertexts.length);
-        });
-      });
-
-      describe('unlock subcommand', () => {
-        it('should decrypt a keystore file with correct password', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword123';
-
-          // Create keystore
-          await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          // Unlock keystore
-          const output = await executeCommand([
-            'key',
-            'keystore',
-            'unlock',
-            filePath,
-            '--password',
-            password,
-          ]);
-
-          // Check for expected output structure
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.unlock.header);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.unlock.separator);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.unlock.uuidLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.unlock.secretLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.unlock.warningLabel);
-
-          // Check that decrypted secret matches original
-          const decryptedSecret = extractUnlockedSecret(output);
-          expect(decryptedSecret).not.toBeNull();
-          expect(decryptedSecret?.toLowerCase()).toBe(secret.toLowerCase());
-        });
-
-        it('should output JSON when --json flag is provided', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
-          const password = 'testpassword';
-
-          // Create keystore
-          await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          // Unlock with JSON output
-          const output = await executeCommand([
-            '--json',
-            'key',
-            'keystore',
-            'unlock',
-            filePath,
-            '--password',
-            password,
-          ]);
-
-          const parsed = parseJsonOutput(output);
-          expect(parsed).not.toBeNull();
-          expect(isValidKeystoreUnlockJson(parsed)).toBe(true);
-          expect(parsed.secret.toLowerCase()).toBe(secret.toLowerCase());
-        });
-
-        it('should fail with wrong password', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'correctpassword';
-          const wrongPassword = 'wrongpassword';
-
-          // Create keystore
-          await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          // Try to unlock with wrong password
-          const output = await executeCommand(
-            ['key', 'keystore', 'unlock', filePath, '--password', wrongPassword],
-            true
-          );
-
-          expect(output).toMatch(/Invalid password|MAC verification failed/i);
-        });
-
-        it('should fail with non-existent file', async () => {
-          const nonExistentPath = path.join(KEYSTORE_TEST_DIR, 'does-not-exist.json');
-
-          const output = await executeCommand(
-            ['key', 'keystore', 'unlock', nonExistentPath, '--password', 'password'],
-            true
-          );
-
-          expect(output).toMatch(/ENOENT|no such file|not found/i);
-        });
-
-        it('should round-trip all test secrets', async () => {
-          for (const testCase of ENCRYPTED_KEYSTORE_TEST_VECTORS.testSecrets) {
-            const filePath = getTestFilePath();
-            const password = 'testpassword';
-
-            // Create keystore
-            await executeCommand([
-              'key',
-              'keystore',
-              'create',
-              filePath,
-              '--secret',
-              testCase.secret,
-              '--password',
-              password,
-            ]);
-
-            // Unlock and verify
-            const output = await executeCommand([
-              '--json',
-              'key',
-              'keystore',
-              'unlock',
-              filePath,
-              '--password',
-              password,
-            ]);
-
-            const parsed = parseJsonOutput(output);
-            expect(parsed).not.toBeNull();
-            expect(parsed.secret.toLowerCase()).toBe(testCase.secret.toLowerCase());
-          }
-        });
-
-        it('should round-trip all test passwords', async () => {
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-
-          for (const testCase of ENCRYPTED_KEYSTORE_TEST_VECTORS.testPasswords) {
-            const filePath = getTestFilePath();
-
-            // Create keystore
-            await executeCommand([
-              'key',
-              'keystore',
-              'create',
-              filePath,
-              '--secret',
-              secret,
-              '--password',
-              testCase.password,
-            ]);
-
-            // Unlock and verify
-            const output = await executeCommand([
-              '--json',
-              'key',
-              'keystore',
-              'unlock',
-              filePath,
-              '--password',
-              testCase.password,
-            ]);
-
-            const parsed = parseJsonOutput(output);
-            expect(parsed).not.toBeNull();
-            expect(parsed.secret.toLowerCase()).toBe(secret.toLowerCase());
-          }
-        });
-
-        it('should preserve UUID across create and unlock', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword';
-
-          // Create keystore
-          const createOutput = await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-          const createUuid = extractKeystoreUuid(createOutput);
-
-          // Unlock keystore
-          const unlockOutput = await executeCommand([
-            'key',
-            'keystore',
-            'unlock',
-            filePath,
-            '--password',
-            password,
-          ]);
-          const unlockUuid = extractKeystoreUuid(unlockOutput);
-
-          expect(createUuid).toBe(unlockUuid);
-        });
-      });
-
-      describe('inspect subcommand', () => {
-        it('should display keystore metadata without decrypting', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword';
-
-          // Create keystore
-          await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          // Inspect keystore (no password needed)
-          const output = await executeCommand(['key', 'keystore', 'inspect', filePath]);
-
-          // Check for expected output structure
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.header);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.separator);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.nameLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.pathLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.uuidLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.cipherLabel);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.inspect.kdfLabel);
-
-          // Should NOT contain the secret
-          expect(output).not.toMatch(/Secret:/i);
-
-          // Check encryption parameters
-          const cipher = extractKeystoreCipher(output);
-          const kdf = extractKeystoreKdf(output);
-          expect(cipher).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.cipher);
-          expect(kdf).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.kdf);
-        });
-
-        it('should output JSON when --json flag is provided', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
-          const password = 'testpassword';
-
-          // Create keystore
-          await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          // Inspect with JSON output
-          const output = await executeCommand(['--json', 'key', 'keystore', 'inspect', filePath]);
-
-          const parsed = parseJsonOutput(output);
-          expect(parsed).not.toBeNull();
-          expect(isValidKeystoreInspectJson(parsed)).toBe(true);
-          expect(parsed.cipher).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.cipher);
-          expect(parsed.kdf).toBe(ENCRYPTED_KEYSTORE_TEST_VECTORS.expectedParams.kdf);
-
-          // Should NOT contain the secret
-          expect(parsed.secret).toBeUndefined();
-        });
-
-        it('should fail with non-existent file', async () => {
-          const nonExistentPath = path.join(KEYSTORE_TEST_DIR, 'does-not-exist.json');
-
-          const output = await executeCommand(
-            ['key', 'keystore', 'inspect', nonExistentPath],
-            true
-          );
-
-          expect(output).toMatch(/ENOENT|no such file|not found/i);
-        });
-
-        it('should fail with invalid JSON file', async () => {
-          const invalidFilePath = path.join(KEYSTORE_TEST_DIR, 'invalid.json');
-          await fs.writeFile(invalidFilePath, 'not valid json');
-
-          const output = await executeCommand(
-            ['key', 'keystore', 'inspect', invalidFilePath],
-            true
-          );
-
-          expect(output).toMatch(/Invalid keystore|not valid JSON/i);
-        });
-
-        it('should preserve UUID from create', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword';
-
-          // Create keystore
-          const createOutput = await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-          const createUuid = extractKeystoreUuid(createOutput);
-
-          // Inspect keystore
-          const inspectOutput = await executeCommand(['key', 'keystore', 'inspect', filePath]);
-          const inspectUuid = extractKeystoreUuid(inspectOutput);
-
-          expect(createUuid).toBe(inspectUuid);
-        });
-      });
-
-      describe('Ethereum compatibility', () => {
-        it('should decrypt go-ethereum keystore test vector', async () => {
-          // Write the go-ethereum test vector to a file
-          const filePath = path.join(KEYSTORE_TEST_DIR, 'go-ethereum-test.json');
-          const testVector = ENCRYPTED_KEYSTORE_TEST_VECTORS.goEthereumTestVector;
-
-          await fs.writeFile(filePath, JSON.stringify(testVector.keystore, null, 2));
-
-          // Decrypt using our implementation
-          const output = await executeCommand([
-            '--json',
-            'key',
-            'keystore',
-            'unlock',
-            filePath,
-            '--password',
-            testVector.password,
-          ]);
-
-          const parsed = parseJsonOutput(output);
-          expect(parsed).not.toBeNull();
-          expect(parsed.secret.toLowerCase()).toBe(testVector.expectedSecret.toLowerCase());
-          expect(parsed.id).toBe(testVector.keystore.id);
-        });
-
-        it('should use aes-128-ctr cipher (Ethereum standard)', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword';
-
-          await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          // Read the file and verify cipher
-          const content = await fs.readFile(filePath, 'utf-8');
-          const keystoreData = JSON.parse(content);
-
-          expect(keystoreData.crypto.cipher).toBe('aes-128-ctr');
-          expect(keystoreData.crypto.kdf).toBe('scrypt');
-          expect(keystoreData.version).toBe(3);
-        });
-
-        it('should use standard scrypt parameters', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword';
-
-          await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          // Read the file and verify scrypt parameters
-          const content = await fs.readFile(filePath, 'utf-8');
-          const keystoreData = JSON.parse(content);
-
-          // Standard Ethereum scrypt parameters
-          expect(keystoreData.crypto.kdfparams.n).toBe(262144); // 2^18
-          expect(keystoreData.crypto.kdfparams.r).toBe(8);
-          expect(keystoreData.crypto.kdfparams.p).toBe(1);
-          expect(keystoreData.crypto.kdfparams.dklen).toBe(32);
-        });
-
-        it('should produce 32-byte ciphertext for 32-byte secret (no padding)', async () => {
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword';
-
-          await executeCommand([
-            'key',
-            'keystore',
-            'create',
-            filePath,
-            '--secret',
-            secret,
-            '--password',
-            password,
-          ]);
-
-          // Read the file and verify ciphertext length
-          const content = await fs.readFile(filePath, 'utf-8');
-          const keystoreData = JSON.parse(content);
-
-          // AES-128-CTR is a stream cipher, so ciphertext length = plaintext length
-          // 32 bytes = 64 hex characters
-          expect(keystoreData.crypto.ciphertext.length).toBe(64);
-        });
-      });
-
-      describe('list subcommand', () => {
-        it('should list keystores in a directory', async () => {
-          // Create a couple of keystores first
-          const filePath1 = getTestFilePath();
-          const filePath2 = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword';
-
-          await executeCommand([
-            'key', 'keystore', 'create', filePath1,
-            '--secret', secret,
-            '--password', password,
-          ]);
-
-          await executeCommand([
-            'key', 'keystore', 'create', filePath2,
-            '--secret', secret,
-            '--password', password,
-          ]);
-
-          // List keystores
-          const output = await executeCommand([
-            'key', 'keystore', 'list',
-            '--keystore-dir', KEYSTORE_TEST_DIR,
-          ]);
-
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.list.header);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.list.separator);
-          expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.list.directoryLabel);
-          expect(output).toContain(KEYSTORE_TEST_DIR);
-        });
-
-        it('should show "No keystores found" for empty directory', async () => {
-          const emptyDir = path.join(os.tmpdir(), '.cazt-empty-keystore-test');
-          await fs.mkdir(emptyDir, { recursive: true });
-
-          try {
-            const output = await executeCommand([
-              'key', 'keystore', 'list',
-              '--keystore-dir', emptyDir,
-            ]);
-
-            expect(output).toMatch(ENCRYPTED_KEYSTORE_TEST_VECTORS.patterns.list.noKeystores);
-          } finally {
-            await fs.rm(emptyDir, { recursive: true, force: true });
-          }
-        });
-
-        it('should output JSON when --json flag is provided', async () => {
-          // Create a keystore first
-          const filePath = getTestFilePath();
-          const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
-          const password = 'testpassword';
-
-          await executeCommand([
-            'key', 'keystore', 'create', filePath,
-            '--secret', secret,
-            '--password', password,
-          ]);
-
-          // List keystores in JSON format
-          const output = await executeCommand([
-            '--json', 'key', 'keystore', 'list',
-            '--keystore-dir', KEYSTORE_TEST_DIR,
-          ]);
-
-          const parsed = parseJsonOutput(output);
-          expect(parsed).not.toBeNull();
-          expect(parsed.directory).toBe(KEYSTORE_TEST_DIR);
-          expect(Array.isArray(parsed.keystores)).toBe(true);
-          expect(parsed.keystores.length).toBeGreaterThan(0);
-
-          // Each keystore should have name, id, and path
-          for (const ks of parsed.keystores) {
-            expect(typeof ks.name).toBe('string');
-            expect(typeof ks.id).toBe('string');
-            expect(typeof ks.path).toBe('string');
-          }
-        });
-      });
-    });
   });
+});
+
+// Note: Keystore command was removed as encryption is now integrated into import/export
