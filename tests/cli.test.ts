@@ -34,6 +34,10 @@ import {
   extractValid,
   isValidVerifiedSignatureJson,
   VERIFY_SIGNATURE_TEST_VECTORS,
+  WALLET_CREATE_TEST_VECTORS,
+  isValidCreatedAccountJson,
+  extractType,
+  extractSalt,
 } from './utils.js';
 import { SecretManager } from '../cli/utils/secret-manager.js';
 import * as os from 'os';
@@ -2410,6 +2414,167 @@ describe('CLI Commands', () => {
         // But should contain the validation result
         const valid = extractValid(verifyOutput);
         expect(valid).not.toBeNull();
+      });
+    });
+  });
+
+  describe('wallet command', () => {
+    describe('create subcommand', () => {
+      it('should create a new account with human-readable output', async () => {
+        const output = await executeCommand(['wallet', 'create']);
+
+        // Check for expected output structure
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.humanReadable.separator);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.humanReadable.addressLabel);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.humanReadable.secretKeyLabel);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.humanReadable.typeLabel);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.humanReadable.saltLabel);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.humanReadable.warningLabel);
+
+        // Check that an address value is present (64 hex chars after 0x)
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.humanReadable.addressValue);
+
+        // Check that a secret key value is present
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.humanReadable.secretKeyValue);
+
+        // Check that security warning is present
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.humanReadable.securityWarning);
+      });
+
+      it('should create a valid account with valid secret key and address', async () => {
+        const output = await executeCommand(['wallet', 'create']);
+
+        // Extract values from output
+        const address = extractAddress(output);
+        const secretKey = extractSecretKey(output);
+        const type = extractType(output);
+        const salt = extractSalt(output);
+
+        expect(address).not.toBeNull();
+        expect(secretKey).not.toBeNull();
+        expect(type).not.toBeNull();
+        expect(salt).not.toBeNull();
+
+        // Validate formats
+        expect(isValidAztecAddress(address!)).toBe(true);
+        expect(isValidSecretKey(secretKey!)).toBe(true);
+        expect(isValidFieldElement(secretKey!)).toBe(true);
+        expect(type).toBe('schnorr');
+      });
+
+      it('should include the expected security warning', async () => {
+        const output = await executeCommand(['wallet', 'create']);
+
+        // Extract warning from output
+        const warning = extractWarning(output);
+
+        expect(warning).not.toBeNull();
+        expect(warning).toBe(WALLET_CREATE_TEST_VECTORS.expectedWarning);
+      });
+
+      it('should generate different accounts on multiple invocations', async () => {
+        const output1 = await executeCommand(['wallet', 'create']);
+        const output2 = await executeCommand(['wallet', 'create']);
+        const output3 = await executeCommand(['wallet', 'create']);
+
+        const address1 = extractAddress(output1);
+        const address2 = extractAddress(output2);
+        const address3 = extractAddress(output3);
+
+        const key1 = extractSecretKey(output1);
+        const key2 = extractSecretKey(output2);
+        const key3 = extractSecretKey(output3);
+
+        // All addresses and keys should be different
+        expect(address1).not.toBe(address2);
+        expect(address2).not.toBe(address3);
+        expect(address1).not.toBe(address3);
+
+        expect(key1).not.toBe(key2);
+        expect(key2).not.toBe(key3);
+        expect(key1).not.toBe(key3);
+      });
+
+      it('should output valid JSON when --json flag is used', async () => {
+        const output = await executeCommand(['wallet', 'create', '--json']);
+
+        // Check JSON structure
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.json.validJson);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.json.hasAddress);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.json.hasSecretKey);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.json.hasType);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.json.hasSalt);
+        expect(output).toMatch(WALLET_CREATE_TEST_VECTORS.patterns.json.hasWarning);
+
+        // Parse and validate JSON structure
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(isValidCreatedAccountJson(parsed)).toBe(true);
+      });
+
+      it('should output valid JSON when --json --no-pretty flags are used', async () => {
+        const output = await executeCommand(['wallet', 'create', '--json', '--no-pretty']);
+
+        // Parse and validate JSON structure
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(isValidCreatedAccountJson(parsed)).toBe(true);
+      });
+
+      it('should create schnorr account by default', async () => {
+        const output = await executeCommand(['wallet', 'create', '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(parsed.type).toBe('schnorr');
+      });
+
+      it('should create schnorr account when --type schnorr is specified', async () => {
+        const output = await executeCommand(['wallet', 'create', '--type', 'schnorr', '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(parsed.type).toBe('schnorr');
+      });
+
+      it('should fail for unsupported account types', async () => {
+        for (const unsupportedType of WALLET_CREATE_TEST_VECTORS.unsupportedTypes) {
+          const output = await executeCommand(['wallet', 'create', '--type', unsupportedType], true);
+
+          expect(output).toMatch(/not supported/i);
+        }
+      });
+
+      it('should use salt of 0 by default', async () => {
+        const output = await executeCommand(['wallet', 'create', '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(parsed.salt).toBe(WALLET_CREATE_TEST_VECTORS.defaults.salt);
+      });
+
+      it('should compute deterministic address from secret key', async () => {
+        // Create an account and extract its secret
+        const createOutput = await executeCommand(['wallet', 'create', '--json']);
+        const createParsed = parseJsonOutput(createOutput);
+
+        // Use the same secret to derive-address and verify it matches
+        const deriveOutput = await executeCommand(['key', 'derive-address', createParsed.secretKey, '--json']);
+        const deriveParsed = parseJsonOutput(deriveOutput);
+
+        expect(deriveParsed.address).toBe(createParsed.address);
+      });
+
+      it('should not include JSON formatting in human-readable output', async () => {
+        const output = await executeCommand(['wallet', 'create']);
+
+        // Human-readable output should not contain JSON-like formatting
+        expect(output).not.toMatch(/"secretKey"/);
+        expect(output).not.toMatch(/"address"/);
+        expect(output).not.toMatch(/"type"/);
+        expect(output).not.toMatch(/"salt"/);
+        expect(output).not.toMatch(/"warning"/);
       });
     });
   });

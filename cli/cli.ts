@@ -574,6 +574,40 @@ keystoreCmd
     }
   });
 
+// =============================================================================
+// WALLET COMMANDS
+// =============================================================================
+
+const walletCmd = program.command('wallet').description('Account wallet commands');
+
+walletCmd
+  .command('create')
+  .description('Create a new account (generates secret key and computes address)')
+  .option('--type <type>', 'Account type (default: schnorr)', 'schnorr')
+  .action(async (options: { type: string }) => {
+    try {
+      const { WalletUtils } = await import('./utils/wallet.js');
+      const result = await WalletUtils.createAccount(options.type as any);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Created Account');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Address:    ${result.address}`);
+        console.log(`Secret Key: ${result.secretKey}`);
+        console.log(`Type:       ${result.type}`);
+        console.log(`Salt:       ${result.salt}`);
+        console.log('');
+        console.log(`WARNING: ${result.warning}`);
+      }
+    } catch (error: any) {
+      console.error(`Error creating account: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 

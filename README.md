@@ -70,6 +70,7 @@ cazt --rpc-url testnet <command>
 | Command | Description |
 |---------|-------------|
 | [`key`](#key) | Key generation, derivation, storage, and signing |
+| [`wallet`](#wallet) | Account wallet operations |
 
 ---
 
@@ -194,6 +195,47 @@ cazt key keystore unlock <name>                   # Decrypt and show secret
 cazt key keystore inspect <name>                  # View metadata (no password)
 cazt key keystore list                            # List all keystores
 cazt key keystore delete <name>                   # Delete keystore file
+```
+
+---
+
+### Wallet
+
+Account wallet commands for creating and managing Aztec accounts.
+
+```
+wallet
+└── create          Create a new account (generates secret key and computes address)
+```
+
+#### `wallet create`
+
+Create a new Aztec account by generating a random secret key and computing the corresponding address.
+
+```bash
+cazt wallet create                  # Create a schnorr account (default)
+cazt wallet create --type schnorr   # Explicit account type
+cazt wallet create --json           # Output as JSON
+```
+
+**Output includes:**
+- **Address**: The computed Aztec account address
+- **Secret Key**: The generated secret key (store securely!)
+- **Type**: Account type (currently only `schnorr`)
+- **Salt**: Salt used for address derivation (default: 0)
+
+**Example:**
+```bash
+$ cazt wallet create
+Created Account
+==================================================
+
+Address:    0x24976a75c17d31ec8425d2d8b0a9090ac16a3634f712588bf717c85f08b06134
+Secret Key: 0x0000000000000000000000000000000000000000000000000000000000000001
+Type:       schnorr
+Salt:       0x0000000000000000000000000000000000000000000000000000000000000000
+
+WARNING: SECURITY WARNING: Store this secret key securely. Anyone with access can control this account.
 ```
 
 ## Roadmap

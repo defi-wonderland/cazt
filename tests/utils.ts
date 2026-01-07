@@ -1148,3 +1148,86 @@ export function isValidKeystoreFile(obj: any): boolean {
     typeof obj.crypto?.kdfparams?.dklen === 'number'
   );
 }
+
+/**
+ * Test vectors for wallet create command
+ */
+export const WALLET_CREATE_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Created Account/,
+      separator: /={50}/,
+      addressLabel: /Address:/,
+      secretKeyLabel: /Secret Key:/,
+      typeLabel: /Type:/,
+      saltLabel: /Salt:/,
+      warningLabel: /WARNING:/,
+      addressValue: /0x[0-9a-f]{64}/i,
+      secretKeyValue: /0x[0-9a-f]+/i,
+      securityWarning: /Store this secret key securely/,
+    },
+    json: {
+      hasAddress: /"address"\s*:/,
+      hasSecretKey: /"secretKey"\s*:/,
+      hasType: /"type"\s*:/,
+      hasSalt: /"salt"\s*:/,
+      hasWarning: /"warning"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+
+  // Supported account types
+  supportedTypes: ['schnorr'] as const,
+
+  // Unsupported account types for error testing
+  unsupportedTypes: ['ecdsa-k', 'ecdsa-r', 'invalid'],
+
+  // Expected security warning
+  expectedWarning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control this account.',
+
+  // Expected default values
+  defaults: {
+    type: 'schnorr',
+    salt: '0x0000000000000000000000000000000000000000000000000000000000000000',
+  },
+};
+
+/**
+ * Validates the structure of a CreatedAccount JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidCreatedAccountJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.secretKey === 'string' &&
+    typeof obj.address === 'string' &&
+    typeof obj.type === 'string' &&
+    typeof obj.salt === 'string' &&
+    typeof obj.warning === 'string' &&
+    isValidSecretKey(obj.secretKey) &&
+    isValidAztecAddress(obj.address)
+  );
+}
+
+/**
+ * Extracts the type from human-readable wallet create CLI output
+ * @param output - The CLI output string
+ * @returns The extracted type or null if not found
+ */
+export function extractType(output: string): string | null {
+  const match = output.match(/Type:\s*(.+?)(?:\n|$)/);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Extracts the salt from human-readable wallet create CLI output
+ * @param output - The CLI output string
+ * @returns The extracted salt or null if not found
+ */
+export function extractSalt(output: string): string | null {
+  const match = output.match(/Salt:\s*(.+?)(?:\n|$)/);
+  return match ? match[1].trim() : null;
+}

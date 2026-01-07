@@ -131,9 +131,56 @@ export interface VerifiedSignature {
 }
 
 /**
+ * Supported account types
+ */
+export type AccountType = 'schnorr';
+
+/**
+ * Result type for account creation
+ */
+export interface CreatedAccount {
+  secretKey: string;
+  address: string;
+  type: AccountType;
+  salt: string;
+  warning: string;
+}
+
+/**
  * Wallet utilities for key operations
  */
 export class WalletUtils {
+  /**
+   * Create a new account (generates secret key and computes address)
+   * @param type - Account type (default: schnorr)
+   * @returns The created account with secret key, address, and type
+   */
+  static async createAccount(type: AccountType = 'schnorr'): Promise<CreatedAccount> {
+    // Validate account type
+    if (type !== 'schnorr') {
+      throw new Error(`Account type '${type}' is not supported. Use 'schnorr'.`);
+    }
+
+    // Generate a new random secret key
+    const secretKeyBuffer = randomBytes(32);
+    const secretKey = Fr.fromBuffer(secretKeyBuffer);
+    const secretKeyStr = secretKey.toString();
+
+    // Use salt of 0 for simplicity (standard for new accounts)
+    const salt = Fr.ZERO;
+
+    // Compute the account address
+    const address = await getSchnorrAccountContractAddress(secretKey, salt);
+
+    return {
+      secretKey: secretKeyStr,
+      address: address.toString(),
+      type,
+      salt: salt.toString(),
+      warning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control this account.',
+    };
+  }
+
   /**
    * Generate a new random secret key
    */
