@@ -1231,3 +1231,208 @@ export function extractSalt(output: string): string | null {
   const match = output.match(/Salt:\s*(.+?)(?:\n|$)/);
   return match ? match[1].trim() : null;
 }
+
+/**
+ * Test vectors for wallet address command
+ */
+export const WALLET_ADDRESS_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Account Address/,
+      separator: /={50}/,
+      addressLabel: /Address:/,
+      typeLabel: /Type:/,
+      saltLabel: /Salt:/,
+      addressValue: /0x[0-9a-f]{64}/i,
+      derivedSecretKeyLabel: /Secret Key \(derived from passphrase\):/,
+    },
+    json: {
+      hasAddress: /"address"\s*:/,
+      hasType: /"type"\s*:/,
+      hasSalt: /"salt"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+
+  // Supported account types
+  supportedTypes: ['schnorr'] as const,
+
+  // Unsupported account types for error testing
+  unsupportedTypes: ['ecdsa-k', 'ecdsa-r', 'invalid'],
+
+  // Test cases with known secret keys and expected addresses (same as derive-address)
+  knownAddresses: [
+    {
+      secretKey: '0x0000000000000000000000000000000000000000000000000000000000000001',
+      salt: undefined,
+      expectedAddress: '0x24976a75c17d31ec8425d2d8b0a9090ac16a3634f712588bf717c85f08b06134',
+      description: 'secret key = 1, no salt (defaults to 0)',
+    },
+    {
+      secretKey: '0x0000000000000000000000000000000000000000000000000000000000000001',
+      salt: '0',
+      expectedAddress: '0x24976a75c17d31ec8425d2d8b0a9090ac16a3634f712588bf717c85f08b06134',
+      description: 'secret key = 1, salt = 0',
+    },
+    {
+      secretKey: '0x0000000000000000000000000000000000000000000000000000000000000001',
+      salt: '1',
+      expectedAddress: '0x187f2d51640404859d6d2d61ab3e8dd6e03da7d7d1169c1e2e9073ac5e0f6c61',
+      description: 'secret key = 1, salt = 1',
+    },
+  ],
+
+  // Expected default values
+  defaults: {
+    type: 'schnorr',
+    salt: '0x0000000000000000000000000000000000000000000000000000000000000000',
+  },
+};
+
+/**
+ * Validates the structure of a ComputedAddress JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidComputedAddressJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.address === 'string' &&
+    typeof obj.type === 'string' &&
+    typeof obj.salt === 'string' &&
+    isValidAztecAddress(obj.address)
+  );
+}
+
+// ============================================================================
+// Integration Test Utilities (for tests requiring a running sandbox)
+// ============================================================================
+
+import { execSync } from 'child_process';
+
+/**
+ * Default node URL for integration tests
+ */
+export const DEFAULT_NODE_URL = process.env.NODE_URL || 'http://localhost:8080';
+
+/**
+ * Check if the local sandbox is available
+ * @param nodeUrl - The node URL to check (defaults to DEFAULT_NODE_URL)
+ * @returns true if sandbox is available
+ */
+export async function isSandboxAvailable(nodeUrl: string = DEFAULT_NODE_URL): Promise<boolean> {
+  try {
+    const response = await fetch(nodeUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'node_getVersion',
+        params: [],
+      }),
+    });
+    if (!response.ok) return false;
+    const data = await response.json() as { result?: unknown; error?: unknown };
+    return data.result !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Execute CLI command using execSync and return stdout
+ * Strips yarn wrapper output for clean results
+ * @param args - CLI arguments to pass to `yarn start`
+ * @param timeout - Optional timeout in milliseconds (default: 5 minutes)
+ * @returns Cleaned stdout output
+ */
+export function runCliSync(args: string, timeout: number = 300_000): string {
+  const output = execSync(`yarn start ${args}`, {
+    encoding: 'utf-8',
+    timeout,
+    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+  }) as string;
+  // Strip yarn output (lines starting with $ or "Done in")
+  return output
+    .split('\n')
+    .filter((line: string) => !line.startsWith('$') && !line.startsWith('Done in'))
+    .join('\n')
+    .trim();
+}
+
+/**
+ * Parse JSON output from CLI, handling yarn wrapper noise
+ * @param output - The CLI output string that may contain JSON
+ * @returns Parsed JSON object
+ * @throws Error if no JSON found in output
+ */
+export function parseCliJson(output: string): any {
+  const jsonMatch = output.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error(`No JSON found in output: ${output}`);
+  }
+  return JSON.parse(jsonMatch[0]);
+}
+
+/**
+ * Generate a random secret key using the CLI
+ * @returns A new random secret key
+ */
+export function generateSecretKey(): string {
+  const output = runCliSync('key generate --json');
+  const json = parseCliJson(output);
+  return json.secretKey;
+}
+
+/**
+ * Test vectors for wallet deploy command
+ */
+export const WALLET_DEPLOY_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Account Deployed/,
+      separator: /={50}/,
+      addressLabel: /Address:/,
+      txHashLabel: /Tx Hash:/,
+      statusLabel: /Status:/,
+      blockLabel: /Block:/,
+      addressValue: /0x[0-9a-f]{64}/i,
+      txHashValue: /0x[0-9a-f]+/i,
+      statusSuccess: /Status:\s*success/,
+    },
+    json: {
+      hasAddress: /"address"\s*:/,
+      hasTxHash: /"txHash"\s*:/,
+      hasStatus: /"status"\s*:/,
+      hasType: /"type"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+
+  // Supported account types
+  supportedTypes: ['schnorr'] as const,
+
+  // Unsupported account types for error testing
+  unsupportedTypes: ['ecdsa-k', 'ecdsa-r', 'invalid'],
+};
+
+/**
+ * Validates the structure of a DeployedAccount JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidDeployedAccountJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.address === 'string' &&
+    typeof obj.txHash === 'string' &&
+    typeof obj.status === 'string' &&
+    typeof obj.type === 'string' &&
+    isValidAztecAddress(obj.address)
+  );
+}

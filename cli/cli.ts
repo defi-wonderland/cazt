@@ -608,6 +608,76 @@ walletCmd
     }
   });
 
+walletCmd
+  .command('address [secret]')
+  .description('Compute account address from secret key (without deploying)')
+  .option('--alias <name>', 'Load secret from keystore by alias')
+  .option('--password <password>', 'Password for encrypted keystore (will prompt if not provided)')
+  .option('--type <type>', 'Account type (default: schnorr)', 'schnorr')
+  .option('--salt <salt>', 'Salt for address derivation (default: 0)')
+  .action(async (secret: string | undefined, options: { alias?: string; password?: string; type?: string; salt?: string }) => {
+    try {
+      const { resolveSecret } = await import('./utils/wallet.js');
+      const { AccountUtils } = await import('./utils/account.js');
+
+      const resolvedSecret = await resolveSecret(secret, options.alias, options.password);
+      const result = await AccountUtils.computeAddress(resolvedSecret, {
+        salt: options.salt,
+        type: options.type as any,
+      });
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Account Address');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Address: ${result.address}`);
+        console.log(`Type:    ${result.type}`);
+        console.log(`Salt:    ${result.salt}`);
+        if (result.secretKey) {
+          console.log('');
+          console.log(`Secret Key (derived from passphrase): ${result.secretKey}`);
+        }
+      }
+    } catch (error: any) {
+      console.error(`Error computing address: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+walletCmd
+  .command('deploy [secret]')
+  .description('Deploy an account contract to the network')
+  .option('--alias <name>', 'Load secret from keystore by alias')
+  .option('--password <password>', 'Password for encrypted keystore (will prompt if not provided)')
+  .option('--type <type>', 'Account type (default: schnorr)', 'schnorr')
+  .option('--salt <salt>', 'Salt for address derivation (default: 0)')
+  .option('--rpc-url <url>', 'Node URL (overrides global --rpc-url)')
+  .action(async (secret: string | undefined, options: { alias?: string; password?: string; type?: string; salt?: string; rpcUrl?: string }) => {
+    try {
+      const { resolveSecret } = await import('./utils/wallet.js');
+      const { AccountUtils } = await import('./utils/account.js');
+      const { resolveRpcUrl } = await import('./config/index.js');
+
+      const resolvedSecret = await resolveSecret(secret, options.alias, options.password);
+      const result = await AccountUtils.deployAccount(resolvedSecret, {
+        salt: options.salt,
+        type: options.type as any,
+        nodeUrl: resolveRpcUrl(options.rpcUrl || program.opts().rpcUrl),
+      });
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log(AccountUtils.formatDeployHumanReadable(result));
+      }
+    } catch (error: any) {
+      console.error(`Error deploying account: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 

@@ -62,7 +62,9 @@ cazt --rpc-url testnet <command>
 ```
 
 **Network Shortcuts:**
+- `local` → `http://localhost:8080`
 - `devnet` → `https://devnet.aztec-labs.com`
+- `next-devnet` → `https://next.devnet.aztec-labs.com`
 - `testnet` → `https://aztec-testnet-fullnode.zkv.xyz`
 
 ## Commands
@@ -201,11 +203,13 @@ cazt key keystore delete <name>                   # Delete keystore file
 
 ### Wallet
 
-Account wallet commands for creating and managing Aztec accounts.
+Account wallet commands for creating, managing, and deploying Aztec accounts.
 
 ```
 wallet
-└── create          Create a new account (generates secret key and computes address)
+├── create          Create a new account (generates secret key and computes address)
+├── address         Compute account address from secret key (offline)
+└── deploy          Deploy an account contract to the network
 ```
 
 #### `wallet create`
@@ -224,18 +228,59 @@ cazt wallet create --json           # Output as JSON
 - **Type**: Account type (currently only `schnorr`)
 - **Salt**: Salt used for address derivation (default: 0)
 
+#### `wallet address`
+
+Compute the account address from a secret key without deploying. Works offline.
+
+```bash
+cazt wallet address <secret>                    # Compute address from secret
+cazt wallet address <secret> --salt 42          # With custom salt
+cazt wallet address "my passphrase"             # Passphrase → Poseidon2 hash
+cazt wallet address --alias <name>              # Use stored secret
+cazt wallet address --alias <name> --password <pw>  # For encrypted secrets
+cazt wallet address --type schnorr              # Explicit account type
+```
+
 **Example:**
 ```bash
-$ cazt wallet create
-Created Account
+$ cazt wallet address 0x0000000000000000000000000000000000000000000000000000000000000001
+Account Address
 ==================================================
 
-Address:    0x24976a75c17d31ec8425d2d8b0a9090ac16a3634f712588bf717c85f08b06134
-Secret Key: 0x0000000000000000000000000000000000000000000000000000000000000001
-Type:       schnorr
-Salt:       0x0000000000000000000000000000000000000000000000000000000000000000
+Address: 0x24976a75c17d31ec8425d2d8b0a9090ac16a3634f712588bf717c85f08b06134
+Type:    schnorr
+Salt:    0x0000000000000000000000000000000000000000000000000000000000000000
+```
 
-WARNING: SECURITY WARNING: Store this secret key securely. Anyone with access can control this account.
+#### `wallet deploy`
+
+Deploy an account contract to the network using sponsored fee payments.
+
+```bash
+cazt wallet deploy <secret>                     # Deploy from secret
+cazt wallet deploy <secret> --salt 42           # With custom salt
+cazt wallet deploy --alias <name>               # Use stored secret
+cazt wallet deploy --alias <name> --password <pw>  # For encrypted secrets
+cazt wallet deploy --type schnorr               # Explicit account type
+cazt wallet deploy --rpc-url devnet             # Deploy to devnet
+```
+
+**Output includes:**
+- **Address**: The deployed account address
+- **Tx Hash**: The deployment transaction hash
+- **Status**: Transaction status
+- **Block**: Block number (when confirmed)
+
+**Example:**
+```bash
+$ cazt wallet deploy 0x123... --rpc-url devnet
+Account Deployed
+==================================================
+
+Address:     0x24976a75c17d31ec8425d2d8b0a9090ac16a3634f712588bf717c85f08b06134
+Tx Hash:     0xabc123...
+Status:      success
+Block:       12345
 ```
 
 ## Roadmap

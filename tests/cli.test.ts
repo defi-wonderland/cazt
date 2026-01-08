@@ -38,6 +38,14 @@ import {
   isValidCreatedAccountJson,
   extractType,
   extractSalt,
+  WALLET_ADDRESS_TEST_VECTORS,
+  isValidComputedAddressJson,
+  // Integration test utilities
+  DEFAULT_NODE_URL,
+  isSandboxAvailable,
+  runCliSync,
+  parseCliJson,
+  generateSecretKey,
 } from './utils.js';
 import { SecretManager } from '../cli/utils/secret-manager.js';
 import * as os from 'os';
@@ -2575,6 +2583,345 @@ describe('CLI Commands', () => {
         expect(output).not.toMatch(/"type"/);
         expect(output).not.toMatch(/"salt"/);
         expect(output).not.toMatch(/"warning"/);
+      });
+    });
+
+    describe('address subcommand', () => {
+      it('should compute address with human-readable output', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const output = await executeCommand(['wallet', 'address', secret]);
+
+        // Check for expected output structure
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.humanReadable.separator);
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.humanReadable.addressLabel);
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.humanReadable.typeLabel);
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.humanReadable.saltLabel);
+
+        // Check that an address value is present
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.humanReadable.addressValue);
+      });
+
+      it('should compute correct address for known secret key', async () => {
+        const testCase = WALLET_ADDRESS_TEST_VECTORS.knownAddresses[0];
+        const output = await executeCommand(['wallet', 'address', testCase.secretKey]);
+
+        const address = extractAddress(output);
+        expect(address).toBe(testCase.expectedAddress);
+      });
+
+      it('should compute correct address with salt', async () => {
+        const testCase = WALLET_ADDRESS_TEST_VECTORS.knownAddresses[2]; // salt = 1
+        const output = await executeCommand(['wallet', 'address', testCase.secretKey, '--salt', testCase.salt!]);
+
+        const address = extractAddress(output);
+        expect(address).toBe(testCase.expectedAddress);
+      });
+
+      it('should output valid JSON when --json flag is used', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const output = await executeCommand(['wallet', 'address', secret, '--json']);
+
+        // Check JSON structure
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.json.validJson);
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.json.hasAddress);
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.json.hasType);
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.json.hasSalt);
+
+        // Parse and validate JSON structure
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(isValidComputedAddressJson(parsed)).toBe(true);
+      });
+
+      it('should use schnorr type by default', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const output = await executeCommand(['wallet', 'address', secret, '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(parsed.type).toBe('schnorr');
+      });
+
+      it('should use salt of 0 by default', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const output = await executeCommand(['wallet', 'address', secret, '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(parsed.salt).toBe(WALLET_ADDRESS_TEST_VECTORS.defaults.salt);
+      });
+
+      it('should fail for unsupported account types', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        for (const unsupportedType of WALLET_ADDRESS_TEST_VECTORS.unsupportedTypes) {
+          const output = await executeCommand(['wallet', 'address', secret, '--type', unsupportedType], true);
+          expect(output).toMatch(/not supported/i);
+        }
+      });
+
+      it('should derive secret key from passphrase', async () => {
+        const passphrase = 'my secret passphrase';
+        const output = await executeCommand(['wallet', 'address', passphrase, '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(isValidAztecAddress(parsed.address)).toBe(true);
+        // Should include derived secret key when using passphrase
+        expect(parsed.secretKey).toBeDefined();
+        expect(isValidSecretKey(parsed.secretKey)).toBe(true);
+      });
+
+      it('should show derived secret key in human-readable output for passphrase', async () => {
+        const passphrase = 'my secret passphrase';
+        const output = await executeCommand(['wallet', 'address', passphrase]);
+
+        expect(output).toMatch(WALLET_ADDRESS_TEST_VECTORS.patterns.humanReadable.derivedSecretKeyLabel);
+      });
+
+      it('should compute same address as key derive-address for hex secrets', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        const walletOutput = await executeCommand(['wallet', 'address', secret, '--json']);
+        const keyOutput = await executeCommand(['key', 'derive-address', secret, '--json']);
+
+        const walletParsed = parseJsonOutput(walletOutput);
+        const keyParsed = parseJsonOutput(keyOutput);
+
+        expect(walletParsed.address).toBe(keyParsed.address);
+      });
+
+      it('should work with --alias from keystore', async () => {
+        // First import a key
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
+        const testAlias = 'wallet_address_test_key';
+        await executeCommand(['key', 'import', secret, '--alias', testAlias, '--no-encrypt']);
+
+        // Then use it with wallet address
+        const output = await executeCommand(['wallet', 'address', '--alias', testAlias, '--json']);
+        const parsed = parseJsonOutput(output);
+
+        expect(parsed).not.toBeNull();
+        expect(isValidAztecAddress(parsed.address)).toBe(true);
+
+        // Clean up
+        await executeCommand(['key', 'delete', testAlias]);
+      });
+
+      it('should fail when neither secret nor alias provided', async () => {
+        const output = await executeCommand(['wallet', 'address'], true);
+        expect(output).toMatch(/Must specify either/i);
+      });
+
+      it('should not include JSON formatting in human-readable output', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const output = await executeCommand(['wallet', 'address', secret]);
+
+        // Human-readable output should not contain JSON-like formatting
+        expect(output).not.toMatch(/"address"/);
+        expect(output).not.toMatch(/"type"/);
+        expect(output).not.toMatch(/"salt"/);
+      });
+    });
+
+    describe('deploy subcommand (integration tests)', () => {
+      // These tests require a local sandbox to be running at http://localhost:8080
+      // They will be skipped if the sandbox is not available.
+      let sandboxAvailable: boolean;
+
+      beforeAll(async () => {
+        sandboxAvailable = await isSandboxAvailable();
+        if (!sandboxAvailable) {
+          console.warn(`
+╔══════════════════════════════════════════════════════════════╗
+║  SANDBOX NOT AVAILABLE - SKIPPING WALLET DEPLOY TESTS        ║
+║                                                              ║
+║  To run these tests, start a local Aztec sandbox:            ║
+║    aztec sandbox                                             ║
+║                                                              ║
+║  Or set NODE_URL environment variable to point to a          ║
+║  running Aztec node.                                         ║
+╚══════════════════════════════════════════════════════════════╝
+`);
+        }
+      });
+
+      it('should deploy an account to the network', async () => {
+        if (!sandboxAvailable) {
+          console.log('Skipping: sandbox not available');
+          return;
+        }
+
+        const secretKey = generateSecretKey();
+
+        // First compute the expected address offline
+        const addressOutput = runCliSync(`wallet address ${secretKey} --json`);
+        const addressJson = parseCliJson(addressOutput);
+        const expectedAddress = addressJson.address;
+
+        expect(isValidAztecAddress(expectedAddress)).toBe(true);
+
+        // Deploy the account
+        const deployOutput = runCliSync(`wallet deploy ${secretKey} --rpc-url ${DEFAULT_NODE_URL} --json`);
+        const deployJson = parseCliJson(deployOutput);
+
+        // Verify deployment result
+        expect(deployJson.address).toBe(expectedAddress);
+        expect(deployJson.status).toBe('success');
+        expect(typeof deployJson.txHash).toBe('string');
+        expect(deployJson.txHash).toMatch(/^0x[0-9a-f]+$/i);
+      }, 300_000);
+
+      it('should deploy an account with a custom salt', async () => {
+        if (!sandboxAvailable) {
+          console.log('Skipping: sandbox not available');
+          return;
+        }
+
+        const secretKey = generateSecretKey();
+        const salt = '42';
+
+        // Compute expected address with salt
+        const addressOutput = runCliSync(`wallet address ${secretKey} --salt ${salt} --json`);
+        const addressJson = parseCliJson(addressOutput);
+        const expectedAddress = addressJson.address;
+
+        // Deploy with same salt
+        const deployOutput = runCliSync(`wallet deploy ${secretKey} --salt ${salt} --rpc-url ${DEFAULT_NODE_URL} --json`);
+        const deployJson = parseCliJson(deployOutput);
+
+        expect(deployJson.address).toBe(expectedAddress);
+        expect(deployJson.status).toBe('success');
+      }, 300_000);
+
+      it('should deploy an account using passphrase', async () => {
+        if (!sandboxAvailable) {
+          console.log('Skipping: sandbox not available');
+          return;
+        }
+
+        const passphrase = `test-passphrase-${Date.now()}`;
+
+        // Compute expected address from passphrase
+        const addressOutput = runCliSync(`wallet address "${passphrase}" --json`);
+        const addressJson = parseCliJson(addressOutput);
+        const expectedAddress = addressJson.address;
+
+        // Deploy using passphrase
+        const deployOutput = runCliSync(`wallet deploy "${passphrase}" --rpc-url ${DEFAULT_NODE_URL} --json`);
+        const deployJson = parseCliJson(deployOutput);
+
+        expect(deployJson.address).toBe(expectedAddress);
+        expect(deployJson.status).toBe('success');
+      }, 300_000);
+
+      it('should deploy with human-readable output', async () => {
+        if (!sandboxAvailable) {
+          console.log('Skipping: sandbox not available');
+          return;
+        }
+
+        const secretKey = generateSecretKey();
+
+        // Deploy without --json flag
+        const output = runCliSync(`wallet deploy ${secretKey} --rpc-url ${DEFAULT_NODE_URL}`);
+
+        // Check human-readable output format
+        expect(output).toMatch(/Account Deployed/);
+        expect(output).toMatch(/={50}/);
+        expect(output).toMatch(/Address:/);
+        expect(output).toMatch(/Tx Hash:/);
+        expect(output).toMatch(/Status:\s*success/);
+
+        // Extract and validate address
+        const address = extractAddress(output);
+        expect(address).not.toBeNull();
+        expect(isValidAztecAddress(address!)).toBe(true);
+      }, 300_000);
+
+      it('should use --alias from keystore', async () => {
+        if (!sandboxAvailable) {
+          console.log('Skipping: sandbox not available');
+          return;
+        }
+
+        const secretKey = generateSecretKey();
+        const alias = `test_deploy_alias_${Date.now()}`;
+
+        try {
+          // Import the key with an alias (no encryption for test simplicity)
+          runCliSync(`key import ${secretKey} --alias ${alias} --no-encrypt`);
+
+          // Compute expected address
+          const addressOutput = runCliSync(`wallet address --alias ${alias} --json`);
+          const addressJson = parseCliJson(addressOutput);
+          const expectedAddress = addressJson.address;
+
+          // Deploy using alias
+          const deployOutput = runCliSync(`wallet deploy --alias ${alias} --rpc-url ${DEFAULT_NODE_URL} --json`);
+          const deployJson = parseCliJson(deployOutput);
+
+          expect(deployJson.address).toBe(expectedAddress);
+          expect(deployJson.status).toBe('success');
+        } finally {
+          // Cleanup: delete the imported key
+          try {
+            runCliSync(`key delete ${alias}`);
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+      }, 300_000);
+
+      it('should deploy using network shortcut "local"', async () => {
+        if (!sandboxAvailable) {
+          console.log('Skipping: sandbox not available');
+          return;
+        }
+
+        const secretKey = generateSecretKey();
+
+        // Deploy using "local" shortcut instead of full URL
+        const deployOutput = runCliSync(`wallet deploy ${secretKey} --rpc-url local --json`);
+        const deployJson = parseCliJson(deployOutput);
+
+        expect(deployJson.status).toBe('success');
+        expect(isValidAztecAddress(deployJson.address)).toBe(true);
+      }, 300_000);
+
+      it('should fail gracefully when deploying to unreachable node', async () => {
+        // This test runs even without sandbox
+        const secretKey = generateSecretKey();
+
+        // Try to deploy to a non-existent node
+        expect(() => {
+          runCliSync(`wallet deploy ${secretKey} --rpc-url http://localhost:99999 --json`);
+        }).toThrow();
+      }, 60_000);
+
+      it('should fail when neither secret nor alias provided', async () => {
+        if (!sandboxAvailable) {
+          console.log('Skipping: sandbox not available');
+          return;
+        }
+
+        expect(() => {
+          runCliSync(`wallet deploy --rpc-url ${DEFAULT_NODE_URL}`);
+        }).toThrow(/Must specify either <secret> or --alias/);
+      });
+
+      it('should fail for unsupported account type', async () => {
+        if (!sandboxAvailable) {
+          console.log('Skipping: sandbox not available');
+          return;
+        }
+
+        const secretKey = generateSecretKey();
+
+        expect(() => {
+          runCliSync(`wallet deploy ${secretKey} --type ecdsa --rpc-url ${DEFAULT_NODE_URL}`);
+        }).toThrow(/not supported/);
       });
     });
   });

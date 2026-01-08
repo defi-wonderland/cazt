@@ -3,10 +3,12 @@
  */
 
 /**
- * Network URL mappings for shortcuts (devnet, testnet)
+ * Network URL mappings for shortcuts (local, devnet, testnet, etc.)
  */
 export const NETWORK_URLS: Record<string, string> = {
+  local: 'http://localhost:8080',
   devnet: 'https://devnet.aztec-labs.com',
+  'next-devnet': 'https://next.devnet.aztec-labs.com',
   testnet: 'https://aztec-testnet-fullnode.zkv.xyz',
 };
 
