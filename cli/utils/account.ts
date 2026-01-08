@@ -152,9 +152,17 @@ export class AccountUtils {
 
     // Deploy the account using getDeployMethod with sponsored fees
     const deployMethod = await accountManager.getDeployMethod();
+
+    // First simulate to estimate gas (required to avoid "Insufficient fee per gas" errors)
+    const { estimatedGas } = await deployMethod.simulate({
+      from: AztecAddress.ZERO,
+      fee: { paymentMethod, estimateGas: true },
+    });
+
+    // Use the estimated gas settings for the actual deployment
     const deployTx = deployMethod.send({
       from: AztecAddress.ZERO,
-      fee: { paymentMethod },
+      fee: { paymentMethod, gasSettings: estimatedGas },
     });
 
     const receipt = await deployTx.wait();
