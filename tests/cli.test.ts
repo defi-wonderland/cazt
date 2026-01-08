@@ -48,6 +48,7 @@ import {
   generateSecretKey,
 } from './utils.js';
 import { SecretManager } from '../cli/utils/secret-manager.js';
+import { createPersistentPXE, type PersistentPXEResult } from '../cli/utils/pxe.js';
 import * as os from 'os';
 import * as path from 'path';
 import { promises as fs } from 'fs';
@@ -2727,32 +2728,37 @@ describe('CLI Commands', () => {
 
     describe('deploy subcommand (integration tests)', () => {
       // These tests require a local sandbox to be running at http://localhost:8080
-      // They will be skipped if the sandbox is not available.
-      let sandboxAvailable: boolean;
+      // Tests will fail if sandbox is not available - start with: aztec sandbox
+
+      // Store reference for cleanup - created in beforeAll, deleted in afterAll
+      let pxeResult: PersistentPXEResult;
 
       beforeAll(async () => {
-        sandboxAvailable = await isSandboxAvailable();
+        const sandboxAvailable = await isSandboxAvailable();
         if (!sandboxAvailable) {
-          console.warn(`
-╔══════════════════════════════════════════════════════════════╗
-║  SANDBOX NOT AVAILABLE - SKIPPING WALLET DEPLOY TESTS        ║
-║                                                              ║
-║  To run these tests, start a local Aztec sandbox:            ║
-║    aztec sandbox                                             ║
-║                                                              ║
-║  Or set NODE_URL environment variable to point to a          ║
-║  running Aztec node.                                         ║
-╚══════════════════════════════════════════════════════════════╝
-`);
+          throw new Error(
+            'Sandbox not available. Start a local Aztec sandbox with: aztec sandbox'
+          );
+        }
+
+        // Create a PXE with the same persistent storage as the CLI uses
+        // Then delete the store to avoid "Array must contain at most 100 element(s)" errors
+        // This happens when too many notes accumulate in the store across test runs
+        pxeResult = await createPersistentPXE(DEFAULT_NODE_URL);
+        await pxeResult.store.delete();
+
+        // Re-create the PXE with a fresh store for tests
+        pxeResult = await createPersistentPXE(DEFAULT_NODE_URL);
+      });
+
+      afterAll(async () => {
+        // Clean up the store after tests
+        if (pxeResult?.store) {
+          await pxeResult.store.delete();
         }
       });
 
       it('should deploy an account to the network', async () => {
-        if (!sandboxAvailable) {
-          console.log('Skipping: sandbox not available');
-          return;
-        }
-
         const secretKey = generateSecretKey();
 
         // First compute the expected address offline
@@ -2774,11 +2780,6 @@ describe('CLI Commands', () => {
       }, 300_000);
 
       it('should deploy an account with a custom salt', async () => {
-        if (!sandboxAvailable) {
-          console.log('Skipping: sandbox not available');
-          return;
-        }
-
         const secretKey = generateSecretKey();
         const salt = '42';
 
@@ -2796,11 +2797,6 @@ describe('CLI Commands', () => {
       }, 300_000);
 
       it('should deploy an account using passphrase', async () => {
-        if (!sandboxAvailable) {
-          console.log('Skipping: sandbox not available');
-          return;
-        }
-
         const passphrase = `test-passphrase-${Date.now()}`;
 
         // Compute expected address from passphrase
@@ -2817,11 +2813,6 @@ describe('CLI Commands', () => {
       }, 300_000);
 
       it('should deploy with human-readable output', async () => {
-        if (!sandboxAvailable) {
-          console.log('Skipping: sandbox not available');
-          return;
-        }
-
         const secretKey = generateSecretKey();
 
         // Deploy without --json flag
@@ -2841,11 +2832,6 @@ describe('CLI Commands', () => {
       }, 300_000);
 
       it('should use --alias from keystore', async () => {
-        if (!sandboxAvailable) {
-          console.log('Skipping: sandbox not available');
-          return;
-        }
-
         const secretKey = generateSecretKey();
         const alias = `test_deploy_alias_${Date.now()}`;
 
@@ -2875,11 +2861,6 @@ describe('CLI Commands', () => {
       }, 300_000);
 
       it('should deploy using network shortcut "local"', async () => {
-        if (!sandboxAvailable) {
-          console.log('Skipping: sandbox not available');
-          return;
-        }
-
         const secretKey = generateSecretKey();
 
         // Deploy using "local" shortcut instead of full URL
@@ -2901,28 +2882,32 @@ describe('CLI Commands', () => {
       }, 60_000);
 
       it('should fail when neither secret nor alias provided', async () => {
-        if (!sandboxAvailable) {
-          console.log('Skipping: sandbox not available');
-          return;
-        }
-
         expect(() => {
           runCliSync(`wallet deploy --rpc-url ${DEFAULT_NODE_URL}`);
         }).toThrow(/Must specify either <secret> or --alias/);
       });
 
       it('should fail for unsupported account type', async () => {
-        if (!sandboxAvailable) {
-          console.log('Skipping: sandbox not available');
-          return;
-        }
-
         const secretKey = generateSecretKey();
 
         expect(() => {
           runCliSync(`wallet deploy ${secretKey} --type ecdsa --rpc-url ${DEFAULT_NODE_URL}`);
         }).toThrow(/not supported/);
       });
+
+      it('should fail when deploying the same account twice', async () => {
+        const secretKey = generateSecretKey();
+
+        // First deployment should succeed
+        const deployOutput = runCliSync(`wallet deploy ${secretKey} --rpc-url ${DEFAULT_NODE_URL} --json`);
+        const deployJson = parseCliJson(deployOutput);
+        expect(deployJson.status).toBe('success');
+
+        // Second deployment of the same account should fail with nullifier error
+        expect(() => {
+          runCliSync(`wallet deploy ${secretKey} --rpc-url ${DEFAULT_NODE_URL} --json`);
+        }).toThrow(/Invalid tx: Existing nullifier/);
+      }, 600_000);
     });
   });
 });

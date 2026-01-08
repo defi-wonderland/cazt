@@ -4,12 +4,12 @@
 
 import { Fr } from '@aztec/foundation/fields';
 import { AztecAddress } from '@aztec/aztec.js/addresses';
-import { createAztecNodeClient, waitForNode } from '@aztec/aztec.js/node';
 import { TestWallet } from '@aztec/test-wallet/server';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
 import { poseidon2Hash } from '@aztec/foundation/crypto';
 import { getDefaultNodeUrl } from '../config/index.js';
 import { registerSponsoredFPC, getSponsoredPaymentMethod } from './fpc.js';
+import { createPersistentPXE } from './pxe.js';
 
 /**
  * Supported account types
@@ -138,10 +138,11 @@ export class AccountUtils {
     // Compute expected address
     const address = await getSchnorrAccountContractAddress(secretKeyFr, salt);
 
-    // Create node client and wallet
-    const node = createAztecNodeClient(nodeUrl);
-    await waitForNode(node);
-    const wallet = await TestWallet.create(node, { proverEnabled: false });
+    // Create persistent PXE with LMDB storage (persists per network)
+    const { pxe, store, node } = await createPersistentPXE(nodeUrl);
+
+    // Create wallet with the persistent store
+    const wallet = await TestWallet.create(node, { proverEnabled: false }, { store });
 
     // Register the SponsoredFPC for fee payments
     await registerSponsoredFPC(wallet);
