@@ -1,26 +1,8 @@
+import { Fr } from '@aztec/foundation/fields';
+
 /**
  * Test utilities and test vectors for CLI tests
  */
-
-/**
- * Validates that a string is a valid hexadecimal secret key
- * @param key - The key string to validate
- * @returns true if valid, false otherwise
- */
-export function isValidSecretKey(key: string): boolean {
-  // Secret keys should be hex strings (with or without 0x prefix)
-  const hexPattern = /^(0x)?[0-9a-fA-F]+$/;
-  if (!hexPattern.test(key)) {
-    return false;
-  }
-
-  // Remove 0x prefix if present
-  const cleanKey = key.startsWith('0x') ? key.slice(2) : key;
-
-  // Should be a valid length (typically 64 characters for 32 bytes)
-  // But we allow flexibility for field elements which may have different representations
-  return cleanKey.length > 0 && cleanKey.length <= 78; // Fr.toString() max length
-}
 
 /**
  * Validates that a key is in valid field element range
@@ -28,23 +10,10 @@ export function isValidSecretKey(key: string): boolean {
  * @param key - The key string (hex) to validate
  * @returns true if within valid range
  */
-export function isValidFieldElement(key: string): boolean {
+export function isValidFieldElement(value: string): boolean {
   try {
-    // Remove 0x prefix if present
-    const cleanKey = key.startsWith('0x') ? key.slice(2) : key;
-
-    // Check if it's a valid hex string
-    if (!/^[0-9a-fA-F]+$/.test(cleanKey)) {
-      return false;
-    }
-
-    // Convert to BigInt and check it's non-negative
-    const keyBigInt = BigInt('0x' + cleanKey);
-
-    // Just check that it's a valid positive bigint
-    // The Fr class from Aztec handles modular reduction, so values from Fr.toString()
-    // should always be valid, even if they appear to exceed the field modulus before reduction
-    return keyBigInt >= 0n;
+    Fr.fromHexString(value);
+    return true;
   } catch {
     return false;
   }
@@ -163,7 +132,7 @@ export function isValidGeneratedKeyJson(obj: any): boolean {
     typeof obj === 'object' &&
     typeof obj.secretKey === 'string' &&
     typeof obj.warning === 'string' &&
-    isValidSecretKey(obj.secretKey)
+    isValidFieldElement(obj.secretKey)
   );
 }
 

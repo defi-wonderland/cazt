@@ -1,6 +1,5 @@
 import { program } from '../cli/cli.js';
 import {
-  isValidSecretKey,
   isValidFieldElement,
   extractSecretKey,
   extractWarning,
@@ -99,7 +98,6 @@ describe('CLI Commands', () => {
         const secretKey = extractSecretKey(output);
 
         expect(secretKey).not.toBeNull();
-        expect(isValidSecretKey(secretKey!)).toBe(true);
         expect(isValidFieldElement(secretKey!)).toBe(true);
       });
 
@@ -187,7 +185,7 @@ describe('CLI Commands', () => {
         expect(output).toMatch(KEY_TEST_VECTORS.patterns.humanReadable.header);
         const secretKey = extractSecretKey(output);
         expect(secretKey).not.toBeNull();
-        expect(isValidSecretKey(secretKey!)).toBe(true);
+        expect(isValidFieldElement(secretKey!)).toBe(true);
       });
 
       it('should generate keys within valid field element range', async () => {
