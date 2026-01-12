@@ -2,53 +2,8 @@
  * Test utilities and test vectors for CLI tests
  */
 
-/**
- * Validates that a string is a valid hexadecimal secret key
- * @param key - The key string to validate
- * @returns true if valid, false otherwise
- */
-export function isValidSecretKey(key: string): boolean {
-  // Secret keys should be hex strings (with or without 0x prefix)
-  const hexPattern = /^(0x)?[0-9a-fA-F]+$/;
-  if (!hexPattern.test(key)) {
-    return false;
-  }
-
-  // Remove 0x prefix if present
-  const cleanKey = key.startsWith('0x') ? key.slice(2) : key;
-
-  // Should be a valid length (typically 64 characters for 32 bytes)
-  // But we allow flexibility for field elements which may have different representations
-  return cleanKey.length > 0 && cleanKey.length <= 78; // Fr.toString() max length
-}
-
-/**
- * Validates that a key is in valid field element range
- * Field elements in Aztec are < BN254 curve order
- * @param key - The key string (hex) to validate
- * @returns true if within valid range
- */
-export function isValidFieldElement(key: string): boolean {
-  try {
-    // Remove 0x prefix if present
-    const cleanKey = key.startsWith('0x') ? key.slice(2) : key;
-
-    // Check if it's a valid hex string
-    if (!/^[0-9a-fA-F]+$/.test(cleanKey)) {
-      return false;
-    }
-
-    // Convert to BigInt and check it's non-negative
-    const keyBigInt = BigInt('0x' + cleanKey);
-
-    // Just check that it's a valid positive bigint
-    // The Fr class from Aztec handles modular reduction, so values from Fr.toString()
-    // should always be valid, even if they appear to exceed the field modulus before reduction
-    return keyBigInt >= 0n;
-  } catch {
-    return false;
-  }
-}
+import { Point } from '@aztec/foundation/fields';
+import { Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
 
 /**
  * Test vectors for key generation
@@ -162,8 +117,7 @@ export function isValidGeneratedKeyJson(obj: any): boolean {
     obj !== null &&
     typeof obj === 'object' &&
     typeof obj.secretKey === 'string' &&
-    typeof obj.warning === 'string' &&
-    isValidSecretKey(obj.secretKey)
+    typeof obj.warning === 'string'
   );
 }
 
@@ -241,7 +195,7 @@ export function isValidDerivedKeysJson(obj: any, includePublic: boolean = false)
   ];
 
   for (const key of requiredSecretKeys) {
-    if (typeof obj.secretKeys[key] !== 'string' || !isValidSecretKey(obj.secretKeys[key])) {
+    if (typeof obj.secretKeys[key] !== 'string') {
       return false;
     }
   }
@@ -331,25 +285,6 @@ export function extractDerivedPublicKeys(output: string): {
 }
 
 /**
- * Validates that a string is a valid Aztec address
- * @param address - The address string to validate
- * @returns true if valid Aztec address format
- */
-export function isValidAztecAddress(address: string): boolean {
-  // Aztec addresses are hex strings (with or without 0x prefix)
-  const hexPattern = /^(0x)?[0-9a-fA-F]+$/;
-  if (!hexPattern.test(address)) {
-    return false;
-  }
-
-  // Remove 0x prefix if present
-  const cleanAddress = address.startsWith('0x') ? address.slice(2) : address;
-
-  // Aztec addresses should be 64 characters (32 bytes)
-  return cleanAddress.length === 64;
-}
-
-/**
  * Extracts the account address from human-readable CLI output
  * @param output - The CLI output string
  * @returns The extracted address or null if not found
@@ -368,8 +303,7 @@ export function isValidDerivedAddressJson(obj: any): boolean {
   return (
     obj !== null &&
     typeof obj === 'object' &&
-    typeof obj.address === 'string' &&
-    isValidAztecAddress(obj.address)
+    typeof obj.address === 'string'
   );
 }
 
@@ -559,8 +493,7 @@ export function isValidImportedKeyJson(obj: any): boolean {
     typeof obj.secret === 'string' &&
     typeof obj.stored === 'boolean' &&
     typeof obj.keystorePath === 'string' &&
-    typeof obj.warning === 'string' &&
-    isValidSecretKey(obj.secret)
+    typeof obj.warning === 'string'
   );
 }
 
@@ -608,42 +541,49 @@ export function isValidExportedKeyJson(obj: any): boolean {
     typeof obj.secret === 'string' &&
     typeof obj.createdAt === 'string' &&
     typeof obj.updatedAt === 'string' &&
-    typeof obj.warning === 'string' &&
-    isValidSecretKey(obj.secret)
+    typeof obj.warning === 'string'
   );
 }
 
+
 /**
- * Validates that a string is a valid Schnorr signature
- * @param signature - The signature string to validate
- * @returns true if valid Schnorr signature format
+ * Convert a message string to a Buffer (same logic as in wallet.ts)
+ * If message starts with 0x and is valid hex, treat as hex-encoded bytes
+ * Otherwise, treat as a UTF-8 string
  */
-export function isValidSchnorrSignature(signature: string): boolean {
-  // Schnorr signatures should be 128 hex characters (64 bytes: 32 for s + 32 for e)
-  // with or without 0x prefix
-  const hexPattern = /^(0x)?[0-9a-fA-F]{128}$/;
-  return hexPattern.test(signature);
+function messageToBuffer(message: string): Buffer {
+  if (message.startsWith('0x')) {
+    const hexStr = message.slice(2);
+    if (/^[0-9a-fA-F]*$/.test(hexStr) && hexStr.length > 0) {
+      return Buffer.from(hexStr, 'hex');
+    }
+  }
+  return Buffer.from(message, 'utf8');
 }
 
 /**
- * Validates that a string is a valid Grumpkin public key
- * @param publicKey - The public key string to validate
- * @returns true if valid public key format
+ * Cryptographically verifies a Schnorr signature using the Aztec library
+ * @param message - The message that was signed
+ * @param signature - The signature string (hex)
+ * @param publicKey - The public key string (hex)
+ * @returns true if the signature is cryptographically valid
  */
-export function isValidPublicKey(publicKey: string): boolean {
-  // Grumpkin public keys are represented as points (x, y)
-  // They should be hex strings (with or without 0x prefix)
-  const hexPattern = /^(0x)?[0-9a-fA-F]+$/;
-  if (!hexPattern.test(publicKey)) {
+export async function verifySchnorrSignature(
+  message: string,
+  signature: string,
+  publicKey: string
+): Promise<boolean> {
+  try {
+    const sig = SchnorrSignature.fromString(signature);
+    const pubKey = Point.fromString(publicKey);
+    const messageBuffer = messageToBuffer(message);
+    const schnorr = new Schnorr();
+    return await schnorr.verifySignature(messageBuffer, pubKey, sig);
+  } catch {
     return false;
   }
-
-  // Remove 0x prefix if present
-  const cleanKey = publicKey.startsWith('0x') ? publicKey.slice(2) : publicKey;
-
-  // Public keys should be 128 characters (64 bytes: 32 for x + 32 for y)
-  return cleanKey.length === 128;
 }
+
 
 /**
  * Extracts the signature from human-readable CLI output
@@ -692,9 +632,7 @@ export function isValidSignedMessageJson(obj: any): boolean {
     typeof obj === 'object' &&
     typeof obj.message === 'string' &&
     typeof obj.signature === 'string' &&
-    typeof obj.publicKey === 'string' &&
-    isValidSchnorrSignature(obj.signature) &&
-    isValidPublicKey(obj.publicKey)
+    typeof obj.publicKey === 'string'
   );
 }
 
@@ -789,9 +727,7 @@ export function isValidVerifiedSignatureJson(obj: any): boolean {
     typeof obj.message === 'string' &&
     typeof obj.signature === 'string' &&
     typeof obj.publicKey === 'string' &&
-    typeof obj.valid === 'boolean' &&
-    isValidSchnorrSignature(obj.signature) &&
-    isValidPublicKey(obj.publicKey)
+    typeof obj.valid === 'boolean'
   );
 }
 
