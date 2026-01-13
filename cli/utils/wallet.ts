@@ -2,9 +2,12 @@
  * Wallet utility functions for key management
  */
 
-import { Fr, Fq, Point } from '@aztec/foundation/fields';
+import { Fr, Fq } from '@aztec/foundation/curves/bn254';
+import { Point } from '@aztec/foundation/curves/grumpkin';
 import { deriveKeys } from '@aztec/stdlib/keys';
-import { randomBytes, poseidon2HashBytes, Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
+import { randomBytes } from '@aztec/foundation/crypto/random';
+import { poseidon2HashBytes } from '@aztec/foundation/crypto/poseidon';
+import { Schnorr, SchnorrSignature } from '@aztec/foundation/crypto/schnorr';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
 import { SecretManager } from './secret-manager.js';
 

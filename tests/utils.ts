@@ -2,8 +2,8 @@
  * Test utilities and test vectors for CLI tests
  */
 
-import { Point } from '@aztec/foundation/fields';
-import { Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
+import { Point } from '@aztec/foundation/curves/grumpkin';
+import { Schnorr, SchnorrSignature } from '@aztec/foundation/crypto/schnorr';
 
 /**
  * Test vectors for key generation
@@ -331,25 +331,25 @@ export const DERIVE_ADDRESS_TEST_VECTORS = {
     {
       secretKey: '0x0000000000000000000000000000000000000000000000000000000000000001',
       salt: undefined,
-      expectedAddress: '0x24976a75c17d31ec8425d2d8b0a9090ac16a3634f712588bf717c85f08b06134',
+      expectedAddress: '0x2bfc1d99a997932e54c0f65519f4084e29d4044596200aa8edaf82ebb41cefd9',
       description: 'secret key = 1, no salt (defaults to 0)',
     },
     {
       secretKey: '0x0000000000000000000000000000000000000000000000000000000000000001',
       salt: '0',
-      expectedAddress: '0x24976a75c17d31ec8425d2d8b0a9090ac16a3634f712588bf717c85f08b06134',
+      expectedAddress: '0x2bfc1d99a997932e54c0f65519f4084e29d4044596200aa8edaf82ebb41cefd9',
       description: 'secret key = 1, salt = 0',
     },
     {
       secretKey: '0x0000000000000000000000000000000000000000000000000000000000000001',
       salt: '1',
-      expectedAddress: '0x187f2d51640404859d6d2d61ab3e8dd6e03da7d7d1169c1e2e9073ac5e0f6c61',
+      expectedAddress: '0x29eb3276bb9ff2f0316e7626eaf60c087e7ccb66bf172de2eed1bb1258747dc9',
       description: 'secret key = 1, salt = 1',
     },
     {
       secretKey: '0x0000000000000000000000000000000000000000000000000000000000000042',
       salt: undefined,
-      expectedAddress: '0x1efffe6fa20045009f15601b94ae974f9e39cf2b73510887406a55067ad73578',
+      expectedAddress: '0x213fea9e5fdaa7ef9a74e58b6916ae34def4a69c464ed0e48c26d6ae33c41920',
       description: 'secret key = 0x42, no salt',
     },
   ],
