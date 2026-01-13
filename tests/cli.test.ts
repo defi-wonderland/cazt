@@ -801,12 +801,37 @@ describe('CLI Commands', () => {
           expect(address1).not.toBe(address2);
         });
 
-        it('should pad short strings with # to 32 chars before hashing', async () => {
-          // "a" padded becomes "a###############################" (a + 31 #)
-          // "ab" padded becomes "ab##############################" (ab + 30 #)
-          // They should produce different results because they differ before padding
+        it('should produce different addresses for different length passphrases', async () => {
+          // Different passphrases should produce different addresses
           const output1 = await executeCommand(['key', 'derive-address', 'a']);
           const output2 = await executeCommand(['key', 'derive-address', 'ab']);
+
+          const address1 = extractAddress(output1);
+          const address2 = extractAddress(output2);
+
+          expect(address1).not.toBe(address2);
+        });
+
+        it('should handle 64-byte passphrases (no truncation with poseidon2HashBytes)', async () => {
+          // This 64-character passphrase should work without any truncation
+          const longPassphrase = 'this_is_a_64_character_passphrase_for_testing_poseidon2_hashing!';
+          expect(longPassphrase.length).toBe(64);
+
+          const output = await executeCommand(['key', 'derive-address', longPassphrase]);
+
+          const address = extractAddress(output);
+          expect(address).not.toBeNull();
+          expect(output).toContain('Secret Key (derived from passphrase):');
+        });
+
+        it('should produce different addresses for 64-byte vs truncated passphrase', async () => {
+          // A 64-char passphrase and its first 32 chars should produce different addresses
+          // This proves the full passphrase is being used, not truncated
+          const longPassphrase = 'this_is_a_64_character_passphrase_for_testing_poseidon2_hashing!';
+          const truncatedPassphrase = longPassphrase.slice(0, 32);
+
+          const output1 = await executeCommand(['key', 'derive-address', longPassphrase]);
+          const output2 = await executeCommand(['key', 'derive-address', truncatedPassphrase]);
 
           const address1 = extractAddress(output1);
           const address2 = extractAddress(output2);

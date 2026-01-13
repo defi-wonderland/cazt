@@ -4,7 +4,7 @@
 
 import { Fr, Fq, Point } from '@aztec/foundation/fields';
 import { deriveKeys } from '@aztec/stdlib/keys';
-import { randomBytes, poseidon2Hash, Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
+import { randomBytes, poseidon2HashBytes, Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
 import { SecretManager } from './secret-manager.js';
 
@@ -34,15 +34,13 @@ function messageToBuffer(message: string): Buffer {
 
 /**
  * Convert a string passphrase to a secret key
- * Pads the string to 32 characters with '#' and hashes with Poseidon2
+ * Hashes the raw UTF-8 bytes directly with Poseidon2
+ * Supports passphrases of any length (no padding needed)
  */
 async function passphraseToSecretKey(passphrase: string): Promise<Fr> {
-  // Pad with '#' to 32 characters (right-pad)
-  const padded = passphrase.padEnd(32, '#');
-  const buffer = Buffer.from(padded, 'utf-8');
-  const fieldElement = Fr.fromBufferReduce(buffer);
-  // Hash with Poseidon2 for proper key derivation
-  return await poseidon2Hash([fieldElement]);
+  const buffer = Buffer.from(passphrase, 'utf-8');
+  // Hash the raw bytes directly with Poseidon2
+  return await poseidon2HashBytes(buffer);
 }
 
 /**
