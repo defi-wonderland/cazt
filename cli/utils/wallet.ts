@@ -16,6 +16,23 @@ function isHexOrNumericString(str: string): boolean {
 }
 
 /**
+ * Convert a message string to a Buffer
+ * If message starts with 0x and is valid hex, treat as hex-encoded bytes
+ * Otherwise, treat as a UTF-8 string (including strings like "0xhello")
+ */
+function messageToBuffer(message: string): Buffer {
+  if (message.startsWith('0x')) {
+    const hexStr = message.slice(2);
+    // Check if it's valid hex - if so, treat as bytes; otherwise treat as UTF-8 string
+    if (/^[0-9a-fA-F]*$/.test(hexStr) && hexStr.length > 0) {
+      return Buffer.from(hexStr, 'hex');
+    }
+  }
+  // Treat as UTF-8 string
+  return Buffer.from(message, 'utf8');
+}
+
+/**
  * Convert a string passphrase to a secret key
  * Pads the string to 32 characters with '#' and hashes with Poseidon2
  */
@@ -328,19 +345,7 @@ export class WalletUtils {
     const secretKey = Fq.fromBuffer(secretKeyFr.toBuffer());
 
     // Convert the message to a buffer
-    // If message starts with 0x, treat it as hex-encoded bytes
-    // Otherwise, treat it as a UTF-8 string
-    let messageBuffer: Buffer;
-    if (message.startsWith('0x')) {
-      const hexStr = message.slice(2);
-      // Validate hex string
-      if (!/^[0-9a-fA-F]*$/.test(hexStr)) {
-        throw new Error(`Invalid hex-encoded message: contains non-hex characters`);
-      }
-      messageBuffer = Buffer.from(hexStr, 'hex');
-    } else {
-      messageBuffer = Buffer.from(message, 'utf8');
-    }
+    const messageBuffer = messageToBuffer(message);
 
     // Create a Schnorr signer instance
     const schnorr = new Schnorr();
@@ -388,19 +393,7 @@ export class WalletUtils {
     }
 
     // Convert the message to a buffer
-    // If message starts with 0x, treat it as hex-encoded bytes
-    // Otherwise, treat it as a UTF-8 string
-    let messageBuffer: Buffer;
-    if (message.startsWith('0x')) {
-      const hexStr = message.slice(2);
-      // Validate hex string
-      if (!/^[0-9a-fA-F]*$/.test(hexStr)) {
-        throw new Error(`Invalid hex-encoded message: contains non-hex characters`);
-      }
-      messageBuffer = Buffer.from(hexStr, 'hex');
-    } else {
-      messageBuffer = Buffer.from(message, 'utf8');
-    }
+    const messageBuffer = messageToBuffer(message);
 
     // Create a Schnorr verifier instance
     const schnorr = new Schnorr();
