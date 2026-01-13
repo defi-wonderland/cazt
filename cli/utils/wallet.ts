@@ -7,6 +7,7 @@ import { deriveKeys } from '@aztec/stdlib/keys';
 import { randomBytes } from '@aztec/foundation/crypto';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
 import { KeyStore } from './keystore.js';
+import { WARNINGS } from '../constants.js';
 
 /**
  * Check if a string looks like a hex field value or numeric string
@@ -110,7 +111,7 @@ export class WalletUtils {
 
     return {
       secretKey: secretKey.toString(),
-      warning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control associated accounts.',
+      warning: WARNINGS.KEY_GENERATE,
     };
   }
 
@@ -210,7 +211,7 @@ export class WalletUtils {
       secret: normalizedSecret,
       stored: true,
       keystorePath: KeyStore.getKeysFilePath(),
-      warning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
+      warning: WARNINGS.KEY_IMPORT,
     };
   }
 
@@ -228,7 +229,7 @@ export class WalletUtils {
       secret: storedKey.secret,
       createdAt: storedKey.createdAt,
       updatedAt: storedKey.updatedAt,
-      warning: 'SECURITY WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.',
+      warning: WARNINGS.KEY_EXPORT,
     };
   }
 }

@@ -2,6 +2,8 @@
  * Test utilities and test vectors for CLI tests
  */
 
+import { WARNINGS } from '../cli/constants.js';
+
 /**
  * Validates that a string is a valid hexadecimal secret key
  * @param key - The key string to validate
@@ -80,7 +82,7 @@ export const KEY_TEST_VECTORS = {
   },
 
   // Security warning text
-  expectedWarning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control associated accounts.',
+  expectedWarning: WARNINGS.KEY_GENERATE,
 
   // Seed test cases
   seedTests: [
@@ -476,7 +478,7 @@ export const IMPORT_KEY_TEST_VECTORS = {
   },
 
   // Expected warning text
-  expectedWarning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
+  expectedWarning: WARNINGS.KEY_IMPORT,
 
   // Valid alias test cases
   validAliases: [
@@ -592,7 +594,7 @@ export const EXPORT_KEY_TEST_VECTORS = {
   },
 
   // Expected warning text
-  expectedWarning: 'SECURITY WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.',
+  expectedWarning: WARNINGS.KEY_EXPORT,
 };
 
 /**
