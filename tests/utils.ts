@@ -1,4 +1,5 @@
 import { Fr } from '@aztec/foundation/fields';
+import { AztecAddress } from '@aztec/stdlib/aztec-address';
 
 /**
  * Test utilities and test vectors for CLI tests
@@ -298,3 +299,117 @@ export function extractDerivedPublicKeys(output: string): {
     masterTaggingPublicKey: taggingMatch[1],
   };
 }
+
+/**
+ * Validates that a string is a valid Aztec address
+ * @param address - The address string to validate
+ * @returns true if valid Aztec address format
+ */
+export async function isValidAztecAddress(address: string): Promise<boolean> {
+  try {
+    const aztecAddress = AztecAddress.fromString(address);
+    return await aztecAddress.isValid();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extracts the account address from human-readable CLI output
+ * @param output - The CLI output string
+ * @returns The extracted address or null if not found
+ */
+export function extractAddress(output: string): string | null {
+  const match = output.match(/Address:\s*(0x[0-9a-f]+)/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Validates the structure of a derive-address JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export async function isValidDerivedAddressJson(obj: any): Promise<boolean> {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.address === 'string' &&
+    await isValidAztecAddress(obj.address)
+  );
+}
+
+/**
+ * Test vectors for address derivation
+ */
+export const DERIVE_ADDRESS_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Derived Account Address/,
+      separator: /={50}/,
+      addressLabel: /Address:/,
+      saltLabel: /Salt:/,
+      addressValue: /0x[0-9a-f]{64}/i,
+    },
+    json: {
+      hasAddress: /"address"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+
+  // Test cases with known secret keys and expected addresses
+  knownAddresses: [
+    {
+      secretKey: '0x0000000000000000000000000000000000000000000000000000000000000001',
+      salt: undefined,
+      expectedAddress: '0x24976a75c17d31ec8425d2d8b0a9090ac16a3634f712588bf717c85f08b06134',
+      description: 'secret key = 1, no salt (defaults to 0)',
+    },
+    {
+      secretKey: '0x0000000000000000000000000000000000000000000000000000000000000001',
+      salt: '0',
+      expectedAddress: '0x24976a75c17d31ec8425d2d8b0a9090ac16a3634f712588bf717c85f08b06134',
+      description: 'secret key = 1, salt = 0',
+    },
+    {
+      secretKey: '0x0000000000000000000000000000000000000000000000000000000000000001',
+      salt: '1',
+      expectedAddress: '0x187f2d51640404859d6d2d61ab3e8dd6e03da7d7d1169c1e2e9073ac5e0f6c61',
+      description: 'secret key = 1, salt = 1',
+    },
+    {
+      secretKey: '0x0000000000000000000000000000000000000000000000000000000000000042',
+      salt: undefined,
+      expectedAddress: '0x1efffe6fa20045009f15601b94ae974f9e39cf2b73510887406a55067ad73578',
+      description: 'secret key = 0x42, no salt',
+    },
+  ],
+
+  // Test cases for random secret keys (just check address format, not specific value)
+  randomSecretTests: [
+    {
+      secretKey: '0x0000000000000000000000000000000000000000000000000000000000000002',
+      description: 'secret key = 2',
+    },
+    {
+      secretKey: '0x000000000000000000000000000000000000000000000000000000000000ffff',
+      description: 'secret key = 0xffff',
+    },
+  ],
+
+  // Test cases with different salt formats
+  saltTests: [
+    {
+      salt: '0',
+      description: 'salt = 0',
+    },
+    {
+      salt: '1',
+      description: 'salt = 1',
+    },
+    {
+      salt: '0x1234567890abcdef',
+      description: 'salt = hex value',
+    },
+  ],
+};

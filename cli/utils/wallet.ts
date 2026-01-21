@@ -3,8 +3,27 @@
  */
 
 import { Fr } from '@aztec/foundation/fields';
-import { randomBytes } from '@aztec/foundation/crypto';
 import { deriveKeys } from '@aztec/stdlib/keys';
+import { randomBytes } from '@aztec/foundation/crypto';
+import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
+
+/**
+ * Check if a string looks like a hex field value or numeric string
+ */
+function isHexOrNumericString(str: string): boolean {
+  return /^0x[0-9a-fA-F]+$/.test(str) || /^[0-9]+$/.test(str);
+}
+
+/**
+ * Convert a string passphrase to a secret key
+ * Pads the string to 32 characters with '#' and converts to field element
+ */
+function passphraseToSecretKey(passphrase: string): Fr {
+  // Pad with '#' to 32 characters (right-pad)
+  const padded = passphrase.padEnd(32, '#');
+  const buffer = Buffer.from(padded, 'utf-8');
+  return Fr.fromBufferReduce(buffer);
+}
 
 /**
  * Result type for key generation
@@ -80,5 +99,34 @@ export class WalletUtils {
     }
 
     return result;
+  }
+
+  /**
+   * Derive account address from a secret key or passphrase
+   * @param secretKeyStr - Secret key (hex/decimal) or passphrase string
+   * @param saltStr - Optional salt for address derivation (defaults to 0)
+   * @returns The computed Aztec account address and optionally the derived secret key
+   */
+  static async deriveAddress(secretKeyStr: string, saltStr?: string): Promise<{ address: string; secretKey?: string }> {
+    let secretKey: Fr;
+    let derivedSecretKey: string | undefined;
+
+    // If it's not a hex/numeric string, treat it as a passphrase
+    if (!isHexOrNumericString(secretKeyStr)) {
+      secretKey = passphraseToSecretKey(secretKeyStr);
+      derivedSecretKey = secretKey.toString();
+    } else {
+      secretKey = Fr.fromString(secretKeyStr);
+    }
+
+    const salt = saltStr ? Fr.fromString(saltStr) : Fr.ZERO;
+
+    // Compute the Schnorr account contract address
+    const address = await getSchnorrAccountContractAddress(secretKey, salt);
+
+    return {
+      address: address.toString(),
+      ...(derivedSecretKey && { secretKey: derivedSecretKey }),
+    };
   }
 }
