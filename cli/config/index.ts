@@ -7,6 +7,7 @@
  */
 export const NETWORK_URLS: Record<string, string> = {
   devnet: 'https://devnet.aztec-labs.com',
+  next_devnet: 'https://next.devnet.aztec-labs.com',
   testnet: 'https://aztec-testnet-fullnode.zkv.xyz',
 };
 
