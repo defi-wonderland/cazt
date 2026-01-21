@@ -1,0 +1,191 @@
+import { promises as fs } from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+
+/**
+ * Interface for stored key data
+ */
+export interface StoredKey {
+  alias: string;
+  secret: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Interface for keystore file format
+ */
+interface KeyStoreData {
+  version: string;
+  keys: Record<string, StoredKey>;
+}
+
+/**
+ * KeyStore manages local storage of secret keys with aliases
+ * Keys are stored in ~/.cazt/keys.json with proper permissions
+ */
+export class KeyStore {
+  private static readonly CAZT_DIR = path.join(os.homedir(), '.cazt');
+  private static readonly KEYS_FILE = path.join(KeyStore.CAZT_DIR, 'keys.json');
+  private static readonly VERSION = '1.0.0';
+  private static readonly FILE_MODE = 0o600; // Read/write for owner only
+
+  /**
+   * Validates that an alias follows naming rules
+   * - Alphanumeric, underscore, dash allowed
+   * - Must start with letter or underscore
+   * - 1-64 characters
+   */
+  static isValidAlias(alias: string): boolean {
+    const aliasPattern = /^[a-zA-Z_][a-zA-Z0-9_-]{0,63}$/;
+    return aliasPattern.test(alias);
+  }
+
+  /**
+   * Ensures the ~/.cazt directory exists with proper permissions
+   */
+  private static async ensureDirectory(): Promise<void> {
+    try {
+      await fs.mkdir(KeyStore.CAZT_DIR, { mode: 0o700, recursive: true });
+    } catch (error: any) {
+      if (error.code !== 'EEXIST') {
+        throw new Error(`Failed to create keystore directory: ${error.message}`);
+      }
+    }
+  }
+
+  /**
+   * Reads the keystore file, creating it if it doesn't exist
+   */
+  private static async readKeyStore(): Promise<KeyStoreData> {
+    await KeyStore.ensureDirectory();
+
+    try {
+      const data = await fs.readFile(KeyStore.KEYS_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+
+      // Validate structure
+      if (!parsed.version || !parsed.keys || typeof parsed.keys !== 'object') {
+        throw new Error('Invalid keystore format');
+      }
+
+      return parsed as KeyStoreData;
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        // File doesn't exist, create empty keystore
+        const emptyStore: KeyStoreData = {
+          version: KeyStore.VERSION,
+          keys: {},
+        };
+        await KeyStore.writeKeyStore(emptyStore);
+        return emptyStore;
+      }
+      throw new Error(`Failed to read keystore: ${error.message}`);
+    }
+  }
+
+  /**
+   * Writes the keystore file with proper permissions
+   */
+  private static async writeKeyStore(data: KeyStoreData): Promise<void> {
+    await KeyStore.ensureDirectory();
+
+    const json = JSON.stringify(data, null, 2);
+    await fs.writeFile(KeyStore.KEYS_FILE, json, { mode: KeyStore.FILE_MODE });
+  }
+
+  /**
+   * Saves a secret key with an alias
+   * @throws Error if alias is invalid or already exists (unless force=true)
+   */
+  static async save(alias: string, secret: string, force: boolean = false): Promise<void> {
+    if (!KeyStore.isValidAlias(alias)) {
+      throw new Error(
+        `Invalid alias '${alias}'. Must start with letter/underscore, contain only alphanumeric/underscore/dash, and be 1-64 characters.`
+      );
+    }
+
+    const store = await KeyStore.readKeyStore();
+
+    if (store.keys[alias] && !force) {
+      throw new Error(
+        `Alias '${alias}' already exists. Use --force to overwrite.`
+      );
+    }
+
+    const now = new Date().toISOString();
+    const isUpdate = !!store.keys[alias];
+
+    store.keys[alias] = {
+      alias,
+      secret,
+      createdAt: isUpdate ? store.keys[alias].createdAt : now,
+      updatedAt: now,
+    };
+
+    await KeyStore.writeKeyStore(store);
+  }
+
+  /**
+   * Loads a secret key by alias
+   * @throws Error if alias doesn't exist
+   */
+  static async load(alias: string): Promise<StoredKey> {
+    const store = await KeyStore.readKeyStore();
+
+    if (!store.keys[alias]) {
+      throw new Error(`Alias '${alias}' not found in keystore.`);
+    }
+
+    return store.keys[alias];
+  }
+
+  /**
+   * Checks if an alias exists in the keystore
+   */
+  static async exists(alias: string): Promise<boolean> {
+    const store = await KeyStore.readKeyStore();
+    return !!store.keys[alias];
+  }
+
+  /**
+   * Lists all stored aliases
+   */
+  static async list(): Promise<StoredKey[]> {
+    const store = await KeyStore.readKeyStore();
+    return Object.values(store.keys).sort((a, b) => a.alias.localeCompare(b.alias));
+  }
+
+  /**
+   * Removes an alias from the keystore
+   * @throws Error if alias doesn't exist
+   */
+  static async remove(alias: string): Promise<void> {
+    const store = await KeyStore.readKeyStore();
+
+    if (!store.keys[alias]) {
+      throw new Error(`Alias '${alias}' not found in keystore.`);
+    }
+
+    delete store.keys[alias];
+    await KeyStore.writeKeyStore(store);
+  }
+
+  /**
+   * Gets the keystore file path for display purposes
+   */
+  static getKeysFilePath(): string {
+    return KeyStore.KEYS_FILE;
+  }
+
+  /**
+   * Clears all keys from the keystore (for testing purposes)
+   */
+  static async clear(): Promise<void> {
+    const emptyStore: KeyStoreData = {
+      version: KeyStore.VERSION,
+      keys: {},
+    };
+    await KeyStore.writeKeyStore(emptyStore);
+  }
+}

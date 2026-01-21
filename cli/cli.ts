@@ -221,6 +221,36 @@ keyCmd
     }
   });
 
+keyCmd
+  .command('import <secret>')
+  .description('Import a secret key with an alias for local storage')
+  .requiredOption('--alias <name>', 'Alias to store the key under')
+  .option('--force', 'Overwrite existing alias if it exists')
+  .action(async (secret: string, options: { alias: string; force?: boolean }) => {
+    try {
+      const { WalletUtils } = await import('./utils/wallet.js');
+      const result = await WalletUtils.importKey(secret, options.alias, options.force || false);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Imported Secret Key');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Alias: ${result.alias}`);
+        console.log(`Secret: ${result.secret}`);
+        console.log(`Address: ${result.address}`);
+        console.log('');
+        console.log(`Stored in: ${result.keystorePath}`);
+        console.log('');
+        console.log(`WARNING: ${result.warning}`);
+      }
+    } catch (error: any) {
+      console.error(`Error importing key: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 

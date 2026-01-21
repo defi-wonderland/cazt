@@ -6,6 +6,26 @@ import { AztecAddress } from '@aztec/stdlib/aztec-address';
  */
 
 /**
+ * Validates that a string is a valid hexadecimal secret key
+ * @param key - The key string to validate
+ * @returns true if valid, false otherwise
+ */
+export function isValidSecretKey(key: string): boolean {
+  // Secret keys should be hex strings (with or without 0x prefix)
+  const hexPattern = /^(0x)?[0-9a-fA-F]+$/;
+  if (!hexPattern.test(key)) {
+    return false;
+  }
+
+  // Remove 0x prefix if present
+  const cleanKey = key.startsWith('0x') ? key.slice(2) : key;
+
+  // Should be a valid length (typically 64 characters for 32 bytes)
+  // But we allow flexibility for field elements which may have different representations
+  return cleanKey.length > 0 && cleanKey.length <= 78; // Fr.toString() max length
+}
+
+/**
  * Validates that a key is in valid field element range
  * Field elements in Aztec are < BN254 curve order
  * @param key - The key string (hex) to validate
@@ -413,3 +433,122 @@ export const DERIVE_ADDRESS_TEST_VECTORS = {
     },
   ],
 };
+
+/**
+ * Test vectors for key import
+ */
+export const IMPORT_KEY_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Imported Secret Key/,
+      separator: /={50}/,
+      aliasLabel: /Alias:/,
+      secretLabel: /Secret:/,
+      addressLabel: /Address:/,
+      storedLabel: /Stored in:/,
+      warningLabel: /WARNING:/,
+      keyValue: /0x[0-9a-f]+/i,
+      securityWarning: /Your secret key is stored locally/,
+    },
+    json: {
+      hasAlias: /"alias"\s*:/,
+      hasSecret: /"secret"\s*:/,
+      hasAddress: /"address"\s*:/,
+      hasStored: /"stored"\s*:/,
+      hasKeystorePath: /"keystorePath"\s*:/,
+      hasWarning: /"warning"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+
+  // Expected warning text
+  expectedWarning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
+
+  // Valid alias test cases
+  validAliases: [
+    { alias: 'mykey', description: 'simple lowercase' },
+    { alias: 'MyKey', description: 'mixed case' },
+    { alias: '_private', description: 'starts with underscore' },
+    { alias: 'test_key', description: 'with underscore' },
+    { alias: 'test-key', description: 'with dash' },
+    { alias: 'key123', description: 'with numbers' },
+    { alias: 'KEY_123', description: 'uppercase with underscore and numbers' },
+    { alias: 'a', description: 'single character' },
+    { alias: 'a'.repeat(64), description: '64 characters (max length)' },
+  ],
+
+  // Invalid alias test cases
+  invalidAliases: [
+    { alias: '1key', description: 'starts with number' },
+    { alias: '-key', description: 'starts with dash' },
+    { alias: 'my key', description: 'contains space' },
+    { alias: 'my@key', description: 'contains special character' },
+    { alias: 'key!', description: 'ends with special character' },
+    { alias: 'a'.repeat(65), description: 'exceeds 64 characters' },
+    { alias: '', description: 'empty string' },
+  ],
+
+  // Test secret keys
+  testSecrets: [
+    {
+      secret: '0x0000000000000000000000000000000000000000000000000000000000000001',
+      description: 'secret key = 1',
+    },
+    {
+      secret: '0x0000000000000000000000000000000000000000000000000000000000000042',
+      description: 'secret key = 0x42',
+    },
+    {
+      secret: '1',
+      description: 'decimal format',
+    },
+  ],
+
+  // Invalid secret keys
+  invalidSecrets: [
+    { secret: 'not-a-key', description: 'invalid hex' },
+    { secret: '0xZZZ', description: 'invalid hex characters' },
+    { secret: '', description: 'empty string' },
+  ],
+};
+
+/**
+ * Extracts the alias from human-readable import CLI output
+ * @param output - The CLI output string
+ * @returns The extracted alias or null if not found
+ */
+export function extractAlias(output: string): string | null {
+  const match = output.match(/Alias:\s*(.+?)(?:\n|$)/);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Extracts the keystore path from human-readable import CLI output
+ * @param output - The CLI output string
+ * @returns The extracted path or null if not found
+ */
+export function extractKeystorePath(output: string): string | null {
+  const match = output.match(/Stored in:\s*(.+?)(?:\n|$)/);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Validates the structure of an ImportedKey JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export async function isValidImportedKeyJson(obj: any): Promise<boolean> {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.alias === 'string' &&
+    typeof obj.secret === 'string' &&
+    typeof obj.address === 'string' &&
+    typeof obj.stored === 'boolean' &&
+    typeof obj.keystorePath === 'string' &&
+    typeof obj.warning === 'string' &&
+    isValidSecretKey(obj.secret) &&
+    await isValidAztecAddress(obj.address)
+  );
+}

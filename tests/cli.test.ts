@@ -1,5 +1,6 @@
 import { program } from '../cli/cli.js';
 import {
+  isValidSecretKey,
   isValidFieldElement,
   extractSecretKey,
   extractWarning,
@@ -14,7 +15,12 @@ import {
   isValidDerivedAddressJson,
   DERIVE_ADDRESS_TEST_VECTORS,
   parseJsonOutput,
+  IMPORT_KEY_TEST_VECTORS,
+  extractAlias,
+  extractKeystorePath,
+  isValidImportedKeyJson,
 } from './utils.js';
+import { KeyStore } from '../cli/utils/keystore.js';
 
 // Mock console methods to capture output
 let consoleOutput: string[] = [];
@@ -116,6 +122,7 @@ describe('CLI Commands', () => {
         const secretKey = extractSecretKey(output);
 
         expect(secretKey).not.toBeNull();
+        expect(isValidSecretKey(secretKey!)).toBe(true);
         expect(isValidFieldElement(secretKey!)).toBe(true);
       });
 
@@ -656,6 +663,7 @@ describe('CLI Commands', () => {
           expect(parsed).not.toBeNull();
           expect(parsed.address).toBeDefined();
           expect(await isValidAztecAddress(parsed.address)).toBe(true);
+
         });
       });
 
@@ -753,6 +761,264 @@ describe('CLI Commands', () => {
           expect(parsed.address).toBeDefined();
           expect(parsed.secretKey).toBeUndefined();
         });
+      });
+    });
+
+    describe('import subcommand', () => {
+      const testSecret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+      // Clean up keystore before and after each test
+      beforeEach(async () => {
+        await KeyStore.clear();
+      });
+
+      afterEach(async () => {
+        await KeyStore.clear();
+      });
+
+      it('should import a secret key with alias with human-readable output', async () => {
+        const alias = 'mykey';
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+
+        // Check for expected output structure
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.separator);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.aliasLabel);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.secretLabel);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.addressLabel);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.storedLabel);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.warningLabel);
+      });
+
+      it('should import and store a valid secret key', async () => {
+        const alias = 'testkey';
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+
+        // Verify the key was stored
+        const stored = await KeyStore.load(alias);
+        expect(stored).toBeDefined();
+        expect(stored.alias).toBe(alias);
+        expect(isValidSecretKey(stored.secret)).toBe(true);
+      });
+
+      it('should extract and display the alias correctly', async () => {
+        const alias = 'myWallet';
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+
+        const extractedAlias = extractAlias(output);
+        expect(extractedAlias).toBe(alias);
+      });
+
+      it('should derive and display the address for the imported key', async () => {
+        const alias = 'addressTest';
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+
+        const address = extractAddress(output);
+        expect(address).not.toBeNull();
+        expect(await isValidAztecAddress(address!)).toBe(true);
+      });
+
+      it('should display the keystore path', async () => {
+        const alias = 'pathTest';
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+
+        const path = extractKeystorePath(output);
+        expect(path).not.toBeNull();
+        expect(path).toContain('.cazt');
+        expect(path).toContain('keys.json');
+      });
+
+      it('should display the security warning', async () => {
+        const alias = 'warningTest';
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+
+        const warning = extractWarning(output);
+        expect(warning).toBe(IMPORT_KEY_TEST_VECTORS.expectedWarning);
+      });
+
+      it('should handle various valid aliases', async () => {
+        for (const testCase of IMPORT_KEY_TEST_VECTORS.validAliases) {
+          await KeyStore.clear(); // Clear for each test
+          const output = await executeCommand(['key', 'import', testSecret, '--alias', testCase.alias]);
+
+          const extractedAlias = extractAlias(output);
+          expect(extractedAlias).toBe(testCase.alias);
+
+          // Verify storage
+          const stored = await KeyStore.load(testCase.alias);
+          expect(stored.alias).toBe(testCase.alias);
+        }
+      });
+
+      it('should reject invalid aliases', async () => {
+        for (const testCase of IMPORT_KEY_TEST_VECTORS.invalidAliases) {
+          const output = await executeCommand(['key', 'import', testSecret, '--alias', testCase.alias], true);
+
+          expect(output).toMatch(/Invalid alias/i);
+        }
+      });
+
+      it('should reject invalid secret keys', async () => {
+        for (const testCase of IMPORT_KEY_TEST_VECTORS.invalidSecrets) {
+          const output = await executeCommand(['key', 'import', testCase.secret, '--alias', 'test'], true);
+
+          expect(output).toMatch(/Invalid secret key|Error/i);
+        }
+      });
+
+      it('should reject duplicate alias without --force flag', async () => {
+        const alias = 'duplicate';
+
+        // Import first time
+        await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+
+        // Try to import again with same alias
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias], true);
+
+        expect(output).toMatch(/already exists/i);
+        expect(output).toMatch(/--force/i);
+      });
+
+      it('should allow overwriting with --force flag', async () => {
+        const alias = 'forceTest';
+        const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
+
+        // Import first key
+        await executeCommand(['key', 'import', secret1, '--alias', alias]);
+
+        // Overwrite with second key using --force
+        const output = await executeCommand(['key', 'import', secret2, '--alias', alias, '--force']);
+
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
+
+        // Verify the stored key was updated
+        const stored = await KeyStore.load(alias);
+        expect(stored.secret).toBe(secret2); // Full normalized form
+      });
+
+      it('should handle different secret key formats', async () => {
+        let index = 0;
+        for (const testCase of IMPORT_KEY_TEST_VECTORS.testSecrets) {
+          const alias = `test${index++}`;
+          const output = await executeCommand(['key', 'import', testCase.secret, '--alias', alias]);
+
+          // Check output contains the secret (import uses "Secret:" not "Secret Key:")
+          expect(output).toMatch(/Secret:/);
+          expect(output).toMatch(/0x[0-9a-f]+/i);
+
+          // Verify storage
+          const stored = await KeyStore.load(alias);
+          expect(isValidSecretKey(stored.secret)).toBe(true);
+        }
+      });
+
+      it('should output JSON when --json flag is used', async () => {
+        const alias = 'jsonTest';
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias, '--json']);
+
+        // Should be valid JSON
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.validJson);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasAlias);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasSecret);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasAddress);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasStored);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasKeystorePath);
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasWarning);
+
+        const parsed = parseJsonOutput(output);
+        expect(await isValidImportedKeyJson(parsed)).toBe(true);
+      });
+
+      it('should produce correct data in JSON format', async () => {
+        const alias = 'jsonDataTest';
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias, '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(parsed.alias).toBe(alias);
+        expect(parsed.secret).toBe(testSecret);
+        expect(await isValidAztecAddress(parsed.address)).toBe(true);
+        expect(parsed.stored).toBe(true);
+        expect(parsed.keystorePath).toContain('.cazt');
+        expect(parsed.warning).toBe(IMPORT_KEY_TEST_VECTORS.expectedWarning);
+      });
+
+      it('should not include JSON formatting in human-readable output', async () => {
+        const alias = 'humanReadableTest';
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+
+        // Human-readable output should not contain JSON-like formatting
+        expect(output).not.toMatch(/"alias"/);
+        expect(output).not.toMatch(/"secret"/);
+        expect(output).not.toMatch(/"address"/);
+
+        // But should contain the actual labels
+        expect(output).toContain('Alias:');
+        expect(output).toContain('Secret:');
+        expect(output).toContain('Address:');
+      });
+
+      it('should persist keys across imports', async () => {
+        const alias1 = 'key1';
+        const alias2 = 'key2';
+        const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
+
+        // Import first key
+        await executeCommand(['key', 'import', secret1, '--alias', alias1]);
+
+        // Import second key
+        await executeCommand(['key', 'import', secret2, '--alias', alias2]);
+
+        // Both should be stored
+        const stored1 = await KeyStore.load(alias1);
+        const stored2 = await KeyStore.load(alias2);
+
+        expect(stored1.alias).toBe(alias1);
+        expect(stored2.alias).toBe(alias2);
+        expect(stored1.secret).not.toBe(stored2.secret);
+      });
+
+      it('should derive consistent addresses for the same secret', async () => {
+        const alias = 'consistentTest';
+        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
+
+        const address1 = extractAddress(output);
+
+        // Import again with different alias but same secret
+        await KeyStore.clear();
+        const alias2 = 'consistentTest2';
+        const output2 = await executeCommand(['key', 'import', testSecret, '--alias', alias2]);
+
+        const address2 = extractAddress(output2);
+
+        // Addresses should be the same for the same secret
+        expect(address1).toBe(address2);
+      });
+
+      it('should normalize secret keys before storage', async () => {
+        const alias = 'normalizeTest';
+        const decimalSecret = '66'; // Decimal representation
+
+        const output = await executeCommand(['key', 'import', decimalSecret, '--alias', alias]);
+
+        // Should succeed
+        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
+
+        // Stored key should be normalized to hex format
+        const stored = await KeyStore.load(alias);
+        expect(stored.secret).toMatch(/^0x/);
+        expect(isValidSecretKey(stored.secret)).toBe(true);
+      });
+
+      it('should require --alias option', async () => {
+        // Try to import without --alias flag
+        const output = await executeCommand(['key', 'import', testSecret], true);
+
+        // Commander.js will show an error about the required option
+        // The output might contain 'required option' or show undefined alias
+        expect(output).toMatch(/required option|alias.*undefined/i);
       });
     });
   });
