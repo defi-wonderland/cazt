@@ -124,16 +124,35 @@ program
   .option('--no-pretty', 'Print compact JSON', false)
   .option('--json', 'Output as JSON (default: raw value for utilities)', false);
 
-// Commands are added by feature PRs. See ROADMAP.md for planned commands:
-// - key: Key management (generate, derive, import, export, keystore)
-// - wallet: Wallet operations (create, deploy, balance, authwit)
-// - contract: Contract interactions (deploy, view, send, simulate)
-// - query: Query operations (public, notes, nullifiers, tx, block)
-// - tx: Transaction analysis (analyze, compare, decode, status)
-// - node: Node info and status
-// - bridge: L1↔L2 bridge operations
-// - monitor: Streaming/monitoring operations
-// - cast: Pure utility functions (hash, address, field, selector, etc.)
+// =============================================================================
+// KEY COMMANDS
+// =============================================================================
+
+const keyCmd = program.command('key').description('Key management commands');
+
+keyCmd
+  .command('generate')
+  .description('Generate a new random secret key')
+  .action(async () => {
+    try {
+      const { WalletUtils } = await import('./utils/wallet.js');
+      const result = await WalletUtils.generateKey('{}');
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Generated Secret Key');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Secret Key: ${result.secretKey}`);
+        console.log('');
+        console.log(`WARNING: ${result.warning}`);
+      }
+    } catch (error: any) {
+      console.error(`Error generating key: ${error.message}`);
+      process.exit(1);
+    }
+  });
 
 // Export program for testing
 export { program };
