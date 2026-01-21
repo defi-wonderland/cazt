@@ -5,6 +5,10 @@ import {
   extractWarning,
   areKeysDifferent,
   KEY_TEST_VECTORS,
+  DERIVE_KEYS_TEST_VECTORS,
+  isValidDerivedKeysJson,
+  extractDerivedSecretKeys,
+  extractDerivedPublicKeys,
 } from './utils.js';
 
 // Mock console methods to capture output
@@ -215,6 +219,248 @@ describe('CLI Commands', () => {
         // But should contain the actual labels
         expect(output).toContain('Secret Key:');
         expect(output).toContain('WARNING:');
+      });
+    });
+
+    describe('derive-keys subcommand', () => {
+      const testSecret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+      it('should derive keys from a secret key with human-readable output', async () => {
+        const output = await executeCommand(['key', 'derive-keys', testSecret]);
+
+        // Check for expected output structure
+        expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.separator);
+        expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.secretKeysHeader);
+
+        // Check for all four secret key labels
+        expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.masterNullifierSecretKey);
+        expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.masterIncomingViewingSecretKey);
+        expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.masterOutgoingViewingSecretKey);
+        expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.masterTaggingSecretKey);
+
+        // Should NOT include public keys by default
+        expect(output).not.toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.publicKeysHeader);
+      });
+
+      it('should derive valid secret keys', async () => {
+        const output = await executeCommand(['key', 'derive-keys', testSecret]);
+
+        // Extract all secret keys
+        const secretKeys = extractDerivedSecretKeys(output);
+
+        expect(secretKeys).not.toBeNull();
+        expect(isValidFieldElement(secretKeys!.masterNullifierSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterTaggingSecretKey)).toBe(true);
+
+        expect(isValidFieldElement(secretKeys!.masterNullifierSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterTaggingSecretKey)).toBe(true);
+      });
+
+      it('should derive different keys for each key type', async () => {
+        const output = await executeCommand(['key', 'derive-keys', testSecret]);
+        const secretKeys = extractDerivedSecretKeys(output);
+
+        expect(secretKeys).not.toBeNull();
+
+        // All four keys should be different from each other
+        const keys = [
+          secretKeys!.masterNullifierSecretKey,
+          secretKeys!.masterIncomingViewingSecretKey,
+          secretKeys!.masterOutgoingViewingSecretKey,
+          secretKeys!.masterTaggingSecretKey,
+        ];
+
+        // Check all pairs are different
+        for (let i = 0; i < keys.length; i++) {
+          for (let j = i + 1; j < keys.length; j++) {
+            expect(areKeysDifferent(keys[i], keys[j])).toBe(true);
+          }
+        }
+      });
+
+      it('should produce deterministic results for the same secret', async () => {
+        const output1 = await executeCommand(['key', 'derive-keys', testSecret]);
+        const output2 = await executeCommand(['key', 'derive-keys', testSecret]);
+
+        const secretKeys1 = extractDerivedSecretKeys(output1);
+        const secretKeys2 = extractDerivedSecretKeys(output2);
+
+        expect(secretKeys1).not.toBeNull();
+        expect(secretKeys2).not.toBeNull();
+
+        // All keys should be identical
+        expect(secretKeys1!.masterNullifierSecretKey).toBe(secretKeys2!.masterNullifierSecretKey);
+        expect(secretKeys1!.masterIncomingViewingSecretKey).toBe(secretKeys2!.masterIncomingViewingSecretKey);
+        expect(secretKeys1!.masterOutgoingViewingSecretKey).toBe(secretKeys2!.masterOutgoingViewingSecretKey);
+        expect(secretKeys1!.masterTaggingSecretKey).toBe(secretKeys2!.masterTaggingSecretKey);
+      });
+
+      it('should derive different keys for different secrets', async () => {
+        const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000002';
+
+        const output1 = await executeCommand(['key', 'derive-keys', secret1]);
+        const output2 = await executeCommand(['key', 'derive-keys', secret2]);
+
+        const secretKeys1 = extractDerivedSecretKeys(output1);
+        const secretKeys2 = extractDerivedSecretKeys(output2);
+
+        expect(secretKeys1).not.toBeNull();
+        expect(secretKeys2).not.toBeNull();
+
+        // All corresponding keys should be different
+        expect(areKeysDifferent(secretKeys1!.masterNullifierSecretKey, secretKeys2!.masterNullifierSecretKey)).toBe(true);
+        expect(areKeysDifferent(secretKeys1!.masterIncomingViewingSecretKey, secretKeys2!.masterIncomingViewingSecretKey)).toBe(true);
+        expect(areKeysDifferent(secretKeys1!.masterOutgoingViewingSecretKey, secretKeys2!.masterOutgoingViewingSecretKey)).toBe(true);
+        expect(areKeysDifferent(secretKeys1!.masterTaggingSecretKey, secretKeys2!.masterTaggingSecretKey)).toBe(true);
+      });
+
+      it('should output formatted sections in correct order', async () => {
+        const output = await executeCommand(['key', 'derive-keys', testSecret]);
+
+        // Find positions of key elements
+        const headerPos = output.indexOf('Derived Keys');
+        const separatorPos = output.indexOf('='.repeat(50));
+        const secretKeysHeaderPos = output.indexOf('Secret Keys:');
+        const nullifierPos = output.indexOf('Master Nullifier Secret Key:');
+        const incomingPos = output.indexOf('Master Incoming Viewing Secret Key:');
+        const outgoingPos = output.indexOf('Master Outgoing Viewing Secret Key:');
+        const taggingPos = output.indexOf('Master Tagging Secret Key:');
+
+        // All elements should be present
+        expect(headerPos).toBeGreaterThanOrEqual(0);
+        expect(separatorPos).toBeGreaterThanOrEqual(0);
+        expect(secretKeysHeaderPos).toBeGreaterThanOrEqual(0);
+        expect(nullifierPos).toBeGreaterThanOrEqual(0);
+        expect(incomingPos).toBeGreaterThanOrEqual(0);
+        expect(outgoingPos).toBeGreaterThanOrEqual(0);
+        expect(taggingPos).toBeGreaterThanOrEqual(0);
+
+        // Elements should appear in correct order
+        expect(headerPos).toBeLessThan(separatorPos);
+        expect(separatorPos).toBeLessThan(secretKeysHeaderPos);
+        expect(secretKeysHeaderPos).toBeLessThan(nullifierPos);
+        expect(nullifierPos).toBeLessThan(incomingPos);
+        expect(incomingPos).toBeLessThan(outgoingPos);
+        expect(outgoingPos).toBeLessThan(taggingPos);
+      });
+
+      it('should handle various test secret inputs', async () => {
+        // Test multiple secret key formats
+        for (const testCase of DERIVE_KEYS_TEST_VECTORS.testSecrets) {
+          const output = await executeCommand(['key', 'derive-keys', testCase.secret]);
+          const secretKeys = extractDerivedSecretKeys(output);
+
+          expect(secretKeys).not.toBeNull();
+          expect(isValidFieldElement(secretKeys!.masterNullifierSecretKey)).toBe(true);
+          expect(isValidFieldElement(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
+          expect(isValidFieldElement(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
+          expect(isValidFieldElement(secretKeys!.masterTaggingSecretKey)).toBe(true);
+        }
+      });
+
+      it('should not include JSON formatting in human-readable output', async () => {
+        const output = await executeCommand(['key', 'derive-keys', testSecret]);
+
+        // Human-readable output should not contain JSON-like formatting
+        expect(output).not.toMatch(/"secretKeys"/);
+        expect(output).not.toMatch(/"publicKeys"/);
+        expect(output).not.toMatch(/"masterNullifierSecretKey"/);
+
+        // But should contain the actual labels
+        expect(output).toContain('Secret Keys:');
+        expect(output).toContain('Master Nullifier Secret Key:');
+      });
+
+      // Tests with --public flag
+      describe('with --public flag', () => {
+        it('should include public keys when --public flag is used', async () => {
+          const output = await executeCommand(['key', 'derive-keys', testSecret, '--public']);
+
+          // Should include both secret and public keys
+          expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.secretKeysHeader);
+          expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.publicKeysHeader);
+
+          // Check for all public key labels
+          expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.masterNullifierPublicKey);
+          expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.masterIncomingViewingPublicKey);
+          expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.masterOutgoingViewingPublicKey);
+          expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.masterTaggingPublicKey);
+        });
+
+        it('should derive valid public keys', async () => {
+          const output = await executeCommand(['key', 'derive-keys', testSecret, '--public']);
+
+          // Extract public keys
+          const publicKeys = extractDerivedPublicKeys(output);
+
+          expect(publicKeys).not.toBeNull();
+          expect(publicKeys!.masterNullifierPublicKey.startsWith('0x')).toBe(true);
+          expect(publicKeys!.masterIncomingViewingPublicKey.startsWith('0x')).toBe(true);
+          expect(publicKeys!.masterOutgoingViewingPublicKey.startsWith('0x')).toBe(true);
+          expect(publicKeys!.masterTaggingPublicKey.startsWith('0x')).toBe(true);
+
+          // Check they're valid hex strings
+          expect(/^0x[0-9a-f]+$/i.test(publicKeys!.masterNullifierPublicKey)).toBe(true);
+          expect(/^0x[0-9a-f]+$/i.test(publicKeys!.masterIncomingViewingPublicKey)).toBe(true);
+          expect(/^0x[0-9a-f]+$/i.test(publicKeys!.masterOutgoingViewingPublicKey)).toBe(true);
+          expect(/^0x[0-9a-f]+$/i.test(publicKeys!.masterTaggingPublicKey)).toBe(true);
+        });
+
+        it('should derive different public keys for each key type', async () => {
+          const output = await executeCommand(['key', 'derive-keys', testSecret, '--public']);
+          const publicKeys = extractDerivedPublicKeys(output);
+
+          expect(publicKeys).not.toBeNull();
+
+          // All four public keys should be different from each other
+          const keys = [
+            publicKeys!.masterNullifierPublicKey,
+            publicKeys!.masterIncomingViewingPublicKey,
+            publicKeys!.masterOutgoingViewingPublicKey,
+            publicKeys!.masterTaggingPublicKey,
+          ];
+
+          // Check all pairs are different
+          for (let i = 0; i < keys.length; i++) {
+            for (let j = i + 1; j < keys.length; j++) {
+              expect(areKeysDifferent(keys[i], keys[j])).toBe(true);
+            }
+          }
+        });
+
+        it('should produce deterministic public keys for the same secret', async () => {
+          const output1 = await executeCommand(['key', 'derive-keys', testSecret, '--public']);
+          const output2 = await executeCommand(['key', 'derive-keys', testSecret, '--public']);
+
+          const publicKeys1 = extractDerivedPublicKeys(output1);
+          const publicKeys2 = extractDerivedPublicKeys(output2);
+
+          expect(publicKeys1).not.toBeNull();
+          expect(publicKeys2).not.toBeNull();
+
+          // All public keys should be identical
+          expect(publicKeys1!.masterNullifierPublicKey).toBe(publicKeys2!.masterNullifierPublicKey);
+          expect(publicKeys1!.masterIncomingViewingPublicKey).toBe(publicKeys2!.masterIncomingViewingPublicKey);
+          expect(publicKeys1!.masterOutgoingViewingPublicKey).toBe(publicKeys2!.masterOutgoingViewingPublicKey);
+          expect(publicKeys1!.masterTaggingPublicKey).toBe(publicKeys2!.masterTaggingPublicKey);
+        });
+
+        it('should show public keys after secret keys in output order', async () => {
+          const output = await executeCommand(['key', 'derive-keys', testSecret, '--public']);
+
+          const secretKeysHeaderPos = output.indexOf('Secret Keys:');
+          const publicKeysHeaderPos = output.indexOf('Public Keys:');
+
+          expect(secretKeysHeaderPos).toBeGreaterThan(0);
+          expect(publicKeysHeaderPos).toBeGreaterThan(0);
+          expect(secretKeysHeaderPos).toBeLessThan(publicKeysHeaderPos);
+        });
       });
     });
   });
