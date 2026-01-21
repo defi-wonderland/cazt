@@ -1,3 +1,6 @@
+import { Fr } from '@aztec/foundation/fields';
+import { AztecAddress } from '@aztec/stdlib/aztec-address';
+
 /**
  * Test utilities and test vectors for CLI tests
  */
@@ -28,23 +31,10 @@ export function isValidSecretKey(key: string): boolean {
  * @param key - The key string (hex) to validate
  * @returns true if within valid range
  */
-export function isValidFieldElement(key: string): boolean {
+export function isValidFieldElement(value: string): boolean {
   try {
-    // Remove 0x prefix if present
-    const cleanKey = key.startsWith('0x') ? key.slice(2) : key;
-
-    // Check if it's a valid hex string
-    if (!/^[0-9a-fA-F]+$/.test(cleanKey)) {
-      return false;
-    }
-
-    // Convert to BigInt and check it's non-negative
-    const keyBigInt = BigInt('0x' + cleanKey);
-
-    // Just check that it's a valid positive bigint
-    // The Fr class from Aztec handles modular reduction, so values from Fr.toString()
-    // should always be valid, even if they appear to exceed the field modulus before reduction
-    return keyBigInt >= 0n;
+    Fr.fromHexString(value);
+    return true;
   } catch {
     return false;
   }
@@ -163,7 +153,7 @@ export function isValidGeneratedKeyJson(obj: any): boolean {
     typeof obj === 'object' &&
     typeof obj.secretKey === 'string' &&
     typeof obj.warning === 'string' &&
-    isValidSecretKey(obj.secretKey)
+    isValidFieldElement(obj.secretKey)
   );
 }
 
@@ -241,7 +231,7 @@ export function isValidDerivedKeysJson(obj: any, includePublic: boolean = false)
   ];
 
   for (const key of requiredSecretKeys) {
-    if (typeof obj.secretKeys[key] !== 'string' || !isValidSecretKey(obj.secretKeys[key])) {
+    if (typeof obj.secretKeys[key] !== 'string' || !isValidFieldElement(obj.secretKeys[key])) {
       return false;
     }
   }
@@ -335,18 +325,13 @@ export function extractDerivedPublicKeys(output: string): {
  * @param address - The address string to validate
  * @returns true if valid Aztec address format
  */
-export function isValidAztecAddress(address: string): boolean {
-  // Aztec addresses are hex strings (with or without 0x prefix)
-  const hexPattern = /^(0x)?[0-9a-fA-F]+$/;
-  if (!hexPattern.test(address)) {
+export async function isValidAztecAddress(address: string): Promise<boolean> {
+  try {
+    const aztecAddress = AztecAddress.fromString(address);
+    return await aztecAddress.isValid();
+  } catch {
     return false;
   }
-
-  // Remove 0x prefix if present
-  const cleanAddress = address.startsWith('0x') ? address.slice(2) : address;
-
-  // Aztec addresses should be 64 characters (32 bytes)
-  return cleanAddress.length === 64;
 }
 
 /**
@@ -364,12 +349,12 @@ export function extractAddress(output: string): string | null {
  * @param obj - The object to validate
  * @returns true if valid structure
  */
-export function isValidDerivedAddressJson(obj: any): boolean {
+export async function isValidDerivedAddressJson(obj: any): Promise<boolean> {
   return (
     obj !== null &&
     typeof obj === 'object' &&
     typeof obj.address === 'string' &&
-    isValidAztecAddress(obj.address)
+    await isValidAztecAddress(obj.address)
   );
 }
 
@@ -553,7 +538,7 @@ export function extractKeystorePath(output: string): string | null {
  * @param obj - The object to validate
  * @returns true if valid structure
  */
-export function isValidImportedKeyJson(obj: any): boolean {
+export async function isValidImportedKeyJson(obj: any): Promise<boolean> {
   return (
     obj !== null &&
     typeof obj === 'object' &&
@@ -564,6 +549,6 @@ export function isValidImportedKeyJson(obj: any): boolean {
     typeof obj.keystorePath === 'string' &&
     typeof obj.warning === 'string' &&
     isValidSecretKey(obj.secret) &&
-    isValidAztecAddress(obj.address)
+    await isValidAztecAddress(obj.address)
   );
 }

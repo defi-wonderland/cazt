@@ -210,7 +210,7 @@ describe('CLI Commands', () => {
         expect(output).toMatch(KEY_TEST_VECTORS.patterns.humanReadable.header);
         const secretKey = extractSecretKey(output);
         expect(secretKey).not.toBeNull();
-        expect(isValidSecretKey(secretKey!)).toBe(true);
+        expect(isValidFieldElement(secretKey!)).toBe(true);
       });
 
       it('should generate keys within valid field element range', async () => {
@@ -271,10 +271,10 @@ describe('CLI Commands', () => {
         const secretKeys = extractDerivedSecretKeys(output);
 
         expect(secretKeys).not.toBeNull();
-        expect(isValidSecretKey(secretKeys!.masterNullifierSecretKey)).toBe(true);
-        expect(isValidSecretKey(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
-        expect(isValidSecretKey(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
-        expect(isValidSecretKey(secretKeys!.masterTaggingSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterNullifierSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterTaggingSecretKey)).toBe(true);
 
         expect(isValidFieldElement(secretKeys!.masterNullifierSecretKey)).toBe(true);
         expect(isValidFieldElement(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
@@ -378,10 +378,10 @@ describe('CLI Commands', () => {
           const secretKeys = extractDerivedSecretKeys(output);
 
           expect(secretKeys).not.toBeNull();
-          expect(isValidSecretKey(secretKeys!.masterNullifierSecretKey)).toBe(true);
-          expect(isValidSecretKey(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
-          expect(isValidSecretKey(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
-          expect(isValidSecretKey(secretKeys!.masterTaggingSecretKey)).toBe(true);
+          expect(isValidFieldElement(secretKeys!.masterNullifierSecretKey)).toBe(true);
+          expect(isValidFieldElement(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
+          expect(isValidFieldElement(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
+          expect(isValidFieldElement(secretKeys!.masterTaggingSecretKey)).toBe(true);
         }
       });
 
@@ -507,7 +507,7 @@ describe('CLI Commands', () => {
         const address = extractAddress(output);
 
         expect(address).not.toBeNull();
-        expect(isValidAztecAddress(address!)).toBe(true);
+        expect(await isValidAztecAddress(address!)).toBe(true);
       });
 
       it('should derive the correct address for known test vectors', async () => {
@@ -557,7 +557,7 @@ describe('CLI Commands', () => {
           const address = extractAddress(output);
 
           expect(address).not.toBeNull();
-          expect(isValidAztecAddress(address!)).toBe(true);
+          expect(await isValidAztecAddress(address!)).toBe(true);
         }
       });
 
@@ -569,7 +569,7 @@ describe('CLI Commands', () => {
         expect(output).toMatch(DERIVE_ADDRESS_TEST_VECTORS.patterns.json.hasAddress);
 
         const parsed = parseJsonOutput(output);
-        expect(isValidDerivedAddressJson(parsed)).toBe(true);
+        expect(await isValidDerivedAddressJson(parsed)).toBe(true);
       });
 
       it('should produce correct address in JSON format', async () => {
@@ -604,7 +604,7 @@ describe('CLI Commands', () => {
           // Should still produce a valid address
           const address = extractAddress(output);
           expect(address).not.toBeNull();
-          expect(isValidAztecAddress(address!)).toBe(true);
+          expect(await isValidAztecAddress(address!)).toBe(true);
         });
 
         it('should derive different addresses with different salts', async () => {
@@ -642,7 +642,7 @@ describe('CLI Commands', () => {
             const address = extractAddress(output);
 
             expect(address).not.toBeNull();
-            expect(isValidAztecAddress(address!)).toBe(true);
+            expect(await isValidAztecAddress(address!)).toBe(true);
           }
         });
 
@@ -662,7 +662,8 @@ describe('CLI Commands', () => {
           const parsed = parseJsonOutput(output);
           expect(parsed).not.toBeNull();
           expect(parsed.address).toBeDefined();
-          expect(isValidAztecAddress(parsed.address)).toBe(true);
+          expect(await isValidAztecAddress(parsed.address)).toBe(true);
+
         });
       });
 
@@ -673,7 +674,7 @@ describe('CLI Commands', () => {
 
           const address = extractAddress(output);
           expect(address).not.toBeNull();
-          expect(isValidAztecAddress(address!)).toBe(true);
+          expect(await isValidAztecAddress(address!)).toBe(true);
         });
 
         it('should show derived secret key when using string passphrase', async () => {
@@ -721,7 +722,7 @@ describe('CLI Commands', () => {
 
           const address = extractAddress(output);
           expect(address).not.toBeNull();
-          expect(isValidAztecAddress(address!)).toBe(true);
+          expect(await isValidAztecAddress(address!)).toBe(true);
           expect(output).toContain('Salt:');
         });
 
@@ -748,7 +749,7 @@ describe('CLI Commands', () => {
           expect(parsed).not.toBeNull();
           expect(parsed.address).toBeDefined();
           expect(parsed.secretKey).toBeDefined();
-          expect(isValidAztecAddress(parsed.address)).toBe(true);
+          expect(await isValidAztecAddress(parsed.address)).toBe(true);
           expect(parsed.secretKey.startsWith('0x')).toBe(true);
         });
 
@@ -814,7 +815,7 @@ describe('CLI Commands', () => {
 
         const address = extractAddress(output);
         expect(address).not.toBeNull();
-        expect(isValidAztecAddress(address!)).toBe(true);
+        expect(await isValidAztecAddress(address!)).toBe(true);
       });
 
       it('should display the keystore path', async () => {
@@ -926,7 +927,7 @@ describe('CLI Commands', () => {
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasWarning);
 
         const parsed = parseJsonOutput(output);
-        expect(isValidImportedKeyJson(parsed)).toBe(true);
+        expect(await isValidImportedKeyJson(parsed)).toBe(true);
       });
 
       it('should produce correct data in JSON format', async () => {
@@ -937,7 +938,7 @@ describe('CLI Commands', () => {
         expect(parsed).not.toBeNull();
         expect(parsed.alias).toBe(alias);
         expect(parsed.secret).toBe(testSecret);
-        expect(isValidAztecAddress(parsed.address)).toBe(true);
+        expect(await isValidAztecAddress(parsed.address)).toBe(true);
         expect(parsed.stored).toBe(true);
         expect(parsed.keystorePath).toContain('.cazt');
         expect(parsed.warning).toBe(IMPORT_KEY_TEST_VECTORS.expectedWarning);
