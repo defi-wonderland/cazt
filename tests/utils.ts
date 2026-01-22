@@ -1,9 +1,48 @@
+import { Fr } from '@aztec/foundation/fields';
+import { AztecAddress } from '@aztec/stdlib/aztec-address';
+
 /**
  * Test utilities and test vectors for CLI tests
  */
 
 import { Point } from '@aztec/foundation/fields';
 import { Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
+import { WARNINGS } from '../cli/constants.js';
+
+/**
+ * Validates that a string is a valid hexadecimal secret key
+ * @param key - The key string to validate
+ * @returns true if valid, false otherwise
+ */
+export function isValidSecretKey(key: string): boolean {
+  // Secret keys should be hex strings (with or without 0x prefix)
+  const hexPattern = /^(0x)?[0-9a-fA-F]+$/;
+  if (!hexPattern.test(key)) {
+    return false;
+  }
+
+  // Remove 0x prefix if present
+  const cleanKey = key.startsWith('0x') ? key.slice(2) : key;
+
+  // Should be a valid length (typically 64 characters for 32 bytes)
+  // But we allow flexibility for field elements which may have different representations
+  return cleanKey.length > 0 && cleanKey.length <= 78; // Fr.toString() max length
+}
+
+/**
+ * Validates that a key is in valid field element range
+ * Field elements in Aztec are < BN254 curve order
+ * @param key - The key string (hex) to validate
+ * @returns true if within valid range
+ */
+export function isValidFieldElement(value: string): boolean {
+  try {
+    Fr.fromHexString(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Test vectors for key generation
@@ -35,7 +74,7 @@ export const KEY_TEST_VECTORS = {
   },
 
   // Security warning text
-  expectedWarning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control associated accounts.',
+  expectedWarning: WARNINGS.KEY_GENERATE,
 
   // Seed test cases
   seedTests: [
@@ -117,7 +156,8 @@ export function isValidGeneratedKeyJson(obj: any): boolean {
     obj !== null &&
     typeof obj === 'object' &&
     typeof obj.secretKey === 'string' &&
-    typeof obj.warning === 'string'
+    typeof obj.warning === 'string' &&
+    isValidFieldElement(obj.secretKey)
   );
 }
 
@@ -195,7 +235,7 @@ export function isValidDerivedKeysJson(obj: any, includePublic: boolean = false)
   ];
 
   for (const key of requiredSecretKeys) {
-    if (typeof obj.secretKeys[key] !== 'string') {
+    if (typeof obj.secretKeys[key] !== 'string' || !isValidFieldElement(obj.secretKeys[key])) {
       return false;
     }
   }
@@ -285,6 +325,20 @@ export function extractDerivedPublicKeys(output: string): {
 }
 
 /**
+ * Validates that a string is a valid Aztec address
+ * @param address - The address string to validate
+ * @returns true if valid Aztec address format
+ */
+export async function isValidAztecAddress(address: string): Promise<boolean> {
+  try {
+    const aztecAddress = AztecAddress.fromString(address);
+    return await aztecAddress.isValid();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Extracts the account address from human-readable CLI output
  * @param output - The CLI output string
  * @returns The extracted address or null if not found
@@ -299,11 +353,12 @@ export function extractAddress(output: string): string | null {
  * @param obj - The object to validate
  * @returns true if valid structure
  */
-export function isValidDerivedAddressJson(obj: any): boolean {
+export async function isValidDerivedAddressJson(obj: any): Promise<boolean> {
   return (
     obj !== null &&
     typeof obj === 'object' &&
-    typeof obj.address === 'string'
+    typeof obj.address === 'string' &&
+    await isValidAztecAddress(obj.address)
   );
 }
 
@@ -410,7 +465,7 @@ export const IMPORT_KEY_TEST_VECTORS = {
   },
 
   // Expected warning text
-  expectedWarning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
+  expectedWarning: WARNINGS.KEY_IMPORT,
 
   // Valid alias test cases
   validAliases: [
@@ -485,7 +540,7 @@ export function extractKeystorePath(output: string): string | null {
  * @param obj - The object to validate
  * @returns true if valid structure
  */
-export function isValidImportedKeyJson(obj: any): boolean {
+export async function isValidImportedKeyJson(obj: any): Promise<boolean> {
   return (
     obj !== null &&
     typeof obj === 'object' &&
@@ -493,7 +548,8 @@ export function isValidImportedKeyJson(obj: any): boolean {
     typeof obj.secret === 'string' &&
     typeof obj.stored === 'boolean' &&
     typeof obj.keystorePath === 'string' &&
-    typeof obj.warning === 'string'
+    typeof obj.warning === 'string' &&
+    isValidFieldElement(obj.secret)
   );
 }
 
@@ -525,7 +581,7 @@ export const EXPORT_KEY_TEST_VECTORS = {
   },
 
   // Expected warning text
-  expectedWarning: 'SECURITY WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.',
+  expectedWarning: WARNINGS.KEY_EXPORT,
 };
 
 /**
@@ -541,7 +597,8 @@ export function isValidExportedKeyJson(obj: any): boolean {
     typeof obj.secret === 'string' &&
     typeof obj.createdAt === 'string' &&
     typeof obj.updatedAt === 'string' &&
-    typeof obj.warning === 'string'
+    typeof obj.warning === 'string' &&
+    isValidFieldElement(obj.secret)
   );
 }
 

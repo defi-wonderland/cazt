@@ -4,9 +4,11 @@
 
 import { Fr, Fq, Point } from '@aztec/foundation/fields';
 import { deriveKeys } from '@aztec/stdlib/keys';
-import { randomBytes, poseidon2Hash, Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
+import { randomBytes, Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
+import { poseidon2Hash } from '@aztec/foundation/crypto/sync';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
 import { KeyStore } from './keystore.js';
+import { WARNINGS } from '../constants.js';
 
 /**
  * Check if a string looks like a hex field value or numeric string
@@ -36,13 +38,13 @@ function messageToBuffer(message: string): Buffer {
  * Convert a string passphrase to a secret key
  * Pads the string to 32 characters with '#' and hashes with Poseidon2
  */
-async function passphraseToSecretKey(passphrase: string): Promise<Fr> {
+function passphraseToSecretKey(passphrase: string): Fr {
   // Pad with '#' to 32 characters (right-pad)
   const padded = passphrase.padEnd(32, '#');
   const buffer = Buffer.from(padded, 'utf-8');
   const fieldElement = Fr.fromBufferReduce(buffer);
   // Hash with Poseidon2 for proper key derivation
-  return await poseidon2Hash([fieldElement]);
+  return poseidon2Hash([fieldElement]);
 }
 
 /**
@@ -155,7 +157,7 @@ export class WalletUtils {
 
     return {
       secretKey: secretKey.toString(),
-      warning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control associated accounts.',
+      warning: WARNINGS.KEY_GENERATE,
     };
   }
 
@@ -204,7 +206,7 @@ export class WalletUtils {
 
     // If it's not a hex/numeric string, treat it as a passphrase
     if (!isHexOrNumericString(secretKeyStr)) {
-      secretKey = await passphraseToSecretKey(secretKeyStr);
+      secretKey = passphraseToSecretKey(secretKeyStr);
       derivedSecretKey = secretKey.toString();
     } else {
       secretKey = Fr.fromString(secretKeyStr);
@@ -255,7 +257,7 @@ export class WalletUtils {
       secret: normalizedSecret,
       stored: true,
       keystorePath: KeyStore.getKeysFilePath(),
-      warning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
+      warning: WARNINGS.KEY_IMPORT,
     };
   }
 
@@ -273,7 +275,7 @@ export class WalletUtils {
       secret: storedKey.secret,
       createdAt: storedKey.createdAt,
       updatedAt: storedKey.updatedAt,
-      warning: 'SECURITY WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.',
+      warning: WARNINGS.KEY_EXPORT,
     };
   }
 
@@ -304,7 +306,7 @@ export class WalletUtils {
     
     // If it's not a hex/numeric string, treat it as a passphrase
     if (!isHexOrNumericString(secretKeyStr)) {
-      secretKeyFr = await passphraseToSecretKey(secretKeyStr);
+      secretKeyFr = passphraseToSecretKey(secretKeyStr);
       derivedSecretKey = secretKeyFr.toString();
     } else {
       try {
