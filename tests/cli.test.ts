@@ -28,8 +28,8 @@ import * as path from 'path';
 import { promises as fs } from 'fs';
 
 // Use a test-specific keystore to avoid touching user's real keys
-const TEST_KEYSTORE_DIR = path.join(os.tmpdir(), '.cazt-test');
-const TEST_KEYSTORE_FILE = 'test_keys.json';
+const TEST_KEYSTORE_DIR = path.join(os.tmpdir(), '.cazt');
+const TEST_KEYSTORE_FILE = 'keys_test.json';
 
 // Configure test keystore before all tests
 beforeAll(async () => {
@@ -51,6 +51,10 @@ afterAll(async () => {
   }
   KeyStore.resetPath();
 });
+
+// Enable test mode to use separate keystore (~/.cazt/keys_test.json)
+// This prevents tests from accidentally wiping real keys
+process.env.NODE_ENV = 'test';
 
 // Mock console methods to capture output
 let consoleOutput: string[] = [];
@@ -997,7 +1001,7 @@ describe('CLI Commands', () => {
         const path = extractKeystorePath(output);
         expect(path).not.toBeNull();
         expect(path).toContain('.cazt');
-        expect(path).toContain('keys.json');
+        expect(path).toContain('keys_test.json');
       });
 
       it('should display the security warning', async () => {
@@ -1358,6 +1362,296 @@ describe('CLI Commands', () => {
         const output = await executeCommand(['key', 'export', 'someAlias'], true);
 
         expect(output).toMatch(/not found/i);
+      });
+    });
+
+    describe('list subcommand', () => {
+      // Clean up keystore before and after each test
+      beforeEach(async () => {
+        await KeyStore.clear();
+      });
+
+      afterEach(async () => {
+        await KeyStore.clear();
+      });
+
+      it('should list all stored key aliases with human-readable output', async () => {
+        // Import some test keys
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000001',
+          '--alias',
+          'alice',
+        ]);
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000042',
+          '--alias',
+          'bob',
+        ]);
+
+        const output = await executeCommand(['key', 'list']);
+
+        // Check for expected output structure
+        expect(output).toMatch(/Stored Key Aliases/);
+        expect(output).toMatch(/={50}/);
+        expect(output).toContain('alice');
+        expect(output).toContain('bob');
+      });
+
+      it('should show message when no keys are stored', async () => {
+        const output = await executeCommand(['key', 'list']);
+
+        expect(output).toMatch(/Stored Key Aliases/);
+        expect(output).toMatch(/No keys stored/);
+      });
+
+      it('should list keys in alphabetical order', async () => {
+        // Import keys in non-alphabetical order
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000001',
+          '--alias',
+          'zebra',
+        ]);
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000002',
+          '--alias',
+          'alice',
+        ]);
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000003',
+          '--alias',
+          'mary',
+        ]);
+
+        const output = await executeCommand(['key', 'list']);
+
+        // Extract positions of aliases in output
+        const alicePos = output.indexOf('alice');
+        const maryPos = output.indexOf('mary');
+        const zebraPos = output.indexOf('zebra');
+
+        // All should be present
+        expect(alicePos).toBeGreaterThan(-1);
+        expect(maryPos).toBeGreaterThan(-1);
+        expect(zebraPos).toBeGreaterThan(-1);
+
+        // Should appear in alphabetical order
+        expect(alicePos).toBeLessThan(maryPos);
+        expect(maryPos).toBeLessThan(zebraPos);
+      });
+
+      it('should work with ls alias', async () => {
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000001',
+          '--alias',
+          'test',
+        ]);
+
+        const output = await executeCommand(['key', 'ls']);
+
+        expect(output).toMatch(/Stored Key Aliases/);
+        expect(output).toContain('test');
+      });
+
+      it('should not expose secret keys in list output', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
+        await executeCommand(['key', 'import', secret, '--alias', 'sensitive']);
+
+        const output = await executeCommand(['key', 'list']);
+
+        // Should show alias but not secret
+        expect(output).toContain('sensitive');
+        expect(output).not.toContain(secret);
+      });
+
+      it('should output JSON when --json flag is used', async () => {
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000001',
+          '--alias',
+          'alice',
+        ]);
+
+        const output = await executeCommand(['key', 'list', '--json']);
+
+        // Should be valid JSON
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(parsed.aliases).toBeDefined();
+        expect(Array.isArray(parsed.aliases)).toBe(true);
+        expect(parsed.aliases).toContain('alice');
+      });
+
+      it('should return empty array in JSON when no keys stored', async () => {
+        const output = await executeCommand(['key', 'list', '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(parsed.aliases).toBeDefined();
+        expect(Array.isArray(parsed.aliases)).toBe(true);
+        expect(parsed.aliases.length).toBe(0);
+      });
+
+      it('should list multiple keys correctly in JSON format', async () => {
+        const testKeys = [
+          { alias: 'alice', secret: '0x0000000000000000000000000000000000000000000000000000000000000001' },
+          { alias: 'bob', secret: '0x0000000000000000000000000000000000000000000000000000000000000002' },
+          { alias: 'charlie', secret: '0x0000000000000000000000000000000000000000000000000000000000000003' },
+        ];
+
+        for (const key of testKeys) {
+          await executeCommand(['key', 'import', key.secret, '--alias', key.alias]);
+        }
+
+        const output = await executeCommand(['key', 'list', '--json']);
+        const parsed = parseJsonOutput(output);
+
+        expect(parsed.aliases).toHaveLength(3);
+        expect(parsed.aliases).toContain('alice');
+        expect(parsed.aliases).toContain('bob');
+        expect(parsed.aliases).toContain('charlie');
+      });
+
+      it('should not include JSON formatting in human-readable output', async () => {
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000001',
+          '--alias',
+          'test',
+        ]);
+
+        const output = await executeCommand(['key', 'list']);
+
+        // Human-readable output should not contain JSON-like formatting
+        expect(output).not.toMatch(/"aliases"/);
+        expect(output).not.toMatch(/\[.*\]/);
+
+        // But should contain the alias itself
+        expect(output).toContain('test');
+      });
+
+      it('should handle special characters in aliases', async () => {
+        const testAliases = ['my-key', 'my_key', 'key123', '_private'];
+
+        for (let i = 0; i < testAliases.length; i++) {
+          await executeCommand([
+            'key',
+            'import',
+            `0x000000000000000000000000000000000000000000000000000000000000000${i + 1}`,
+            '--alias',
+            testAliases[i],
+          ]);
+        }
+
+        const output = await executeCommand(['key', 'list']);
+
+        for (const alias of testAliases) {
+          expect(output).toContain(alias);
+        }
+      });
+
+      it('should update list after importing new key', async () => {
+        // Start with one key
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000001',
+          '--alias',
+          'first',
+        ]);
+
+        let output = await executeCommand(['key', 'list', '--json']);
+        let parsed = parseJsonOutput(output);
+        expect(parsed.aliases).toHaveLength(1);
+
+        // Add another key
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000002',
+          '--alias',
+          'second',
+        ]);
+
+        output = await executeCommand(['key', 'list', '--json']);
+        parsed = parseJsonOutput(output);
+        expect(parsed.aliases).toHaveLength(2);
+        expect(parsed.aliases).toContain('first');
+        expect(parsed.aliases).toContain('second');
+      });
+
+      it('should be consistent between multiple invocations', async () => {
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000001',
+          '--alias',
+          'test1',
+        ]);
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000002',
+          '--alias',
+          'test2',
+        ]);
+
+        const output1 = await executeCommand(['key', 'list', '--json']);
+        const output2 = await executeCommand(['key', 'list', '--json']);
+
+        const parsed1 = parseJsonOutput(output1);
+        const parsed2 = parseJsonOutput(output2);
+
+        expect(parsed1.aliases).toEqual(parsed2.aliases);
+      });
+
+      it('should list single key correctly', async () => {
+        await executeCommand([
+          'key',
+          'import',
+          '0x0000000000000000000000000000000000000000000000000000000000000001',
+          '--alias',
+          'single',
+        ]);
+
+        const output = await executeCommand(['key', 'list']);
+
+        expect(output).toContain('single');
+        expect(output).toMatch(/Stored Key Aliases/);
+      });
+
+      it('should handle large number of keys', async () => {
+        // Import 10 keys
+        for (let i = 0; i < 10; i++) {
+          await executeCommand([
+            'key',
+            'import',
+            `0x000000000000000000000000000000000000000000000000000000000000000${i.toString(16)}`,
+            '--alias',
+            `key${i}`,
+          ]);
+        }
+
+        const output = await executeCommand(['key', 'list', '--json']);
+        const parsed = parseJsonOutput(output);
+
+        expect(parsed.aliases).toHaveLength(10);
+        for (let i = 0; i < 10; i++) {
+          expect(parsed.aliases).toContain(`key${i}`);
+        }
       });
     });
   });

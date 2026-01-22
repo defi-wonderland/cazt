@@ -99,6 +99,13 @@ export interface ExportedKey {
 }
 
 /**
+ * Result type for listing keys
+ */
+export interface ListedKeys {
+  aliases: string[];
+}
+
+/**
  * Wallet utilities for key operations
  */
 export class WalletUtils {
@@ -230,6 +237,20 @@ export class WalletUtils {
       createdAt: storedKey.createdAt,
       updatedAt: storedKey.updatedAt,
       warning: WARNINGS.KEY_EXPORT,
+    };
+  }
+
+  /**
+   * List all stored key aliases
+   * @returns Array of all stored key aliases
+   */
+  static async listKeys(): Promise<ListedKeys> {
+    // Get all stored keys from keystore
+    const storedKeys = await KeyStore.list();
+
+    // Extract just the aliases and return
+    return {
+      aliases: storedKeys.map(k => k.alias),
     };
   }
 }
