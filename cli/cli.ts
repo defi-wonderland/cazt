@@ -155,13 +155,15 @@ keyCmd
   });
 
 keyCmd
-  .command('derive-keys <secret>')
-  .description('Derive keys from secret key')
+  .command('derive-keys [secret]')
+  .description('Derive keys from secret key or keystore alias')
+  .option('--alias <name>', 'Load secret from keystore by alias')
   .option('--public', 'Include public keys in the output')
-  .action(async (secret: string, options: { public?: boolean }) => {
+  .action(async (secret: string | undefined, options: { alias?: string; public?: boolean }) => {
     try {
-      const { WalletUtils } = await import('./utils/wallet.js');
-      const result = await WalletUtils.deriveKeysFromSecret(secret, options.public || false);
+      const { WalletUtils, resolveSecret } = await import('./utils/wallet.js');
+      const resolvedSecret = await resolveSecret(secret, options.alias);
+      const result = await WalletUtils.deriveKeysFromSecret(resolvedSecret, options.public || false);
 
       if (program.opts().json) {
         console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
@@ -191,13 +193,15 @@ keyCmd
   });
 
 keyCmd
-  .command('derive-address <secret>')
-  .description('Compute account address from secret key or passphrase')
+  .command('derive-address [secret]')
+  .description('Compute account address from secret key, passphrase, or keystore alias')
+  .option('--alias <name>', 'Load secret from keystore by alias')
   .option('--salt <salt>', 'Optional salt for address derivation')
-  .action(async (secret: string, options: { salt?: string }) => {
+  .action(async (secret: string | undefined, options: { alias?: string; salt?: string }) => {
     try {
-      const { WalletUtils } = await import('./utils/wallet.js');
-      const result = await WalletUtils.deriveAddress(secret, options.salt);
+      const { WalletUtils, resolveSecret } = await import('./utils/wallet.js');
+      const resolvedSecret = await resolveSecret(secret, options.alias);
+      const result = await WalletUtils.deriveAddress(resolvedSecret, options.salt);
 
       if (program.opts().json) {
         console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
@@ -239,7 +243,6 @@ keyCmd
         console.log('');
         console.log(`Alias: ${result.alias}`);
         console.log(`Secret: ${result.secret}`);
-        console.log(`Address: ${result.address}`);
         console.log('');
         console.log(`Stored in: ${result.keystorePath}`);
         console.log('');
@@ -247,6 +250,34 @@ keyCmd
       }
     } catch (error: any) {
       console.error(`Error importing key: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+keyCmd
+  .command('export <alias>')
+  .description('Export a secret key by its alias from local storage')
+  .action(async (alias: string) => {
+    try {
+      const { WalletUtils } = await import('./utils/wallet.js');
+      const result = await WalletUtils.exportKey(alias);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Exported Secret Key');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Alias: ${result.alias}`);
+        console.log(`Secret: ${result.secret}`);
+        console.log('');
+        console.log(`Created: ${new Date(result.createdAt).toLocaleString()}`);
+        console.log(`Updated: ${new Date(result.updatedAt).toLocaleString()}`);
+        console.log('');
+        console.log(`WARNING: ${result.warning}`);
+      }
+    } catch (error: any) {
+      console.error(`Error exporting key: ${error.message}`);
       process.exit(1);
     }
   });

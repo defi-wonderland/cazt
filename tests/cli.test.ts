@@ -19,8 +19,38 @@ import {
   extractAlias,
   extractKeystorePath,
   isValidImportedKeyJson,
+  EXPORT_KEY_TEST_VECTORS,
+  isValidExportedKeyJson,
 } from './utils.js';
 import { KeyStore } from '../cli/utils/keystore.js';
+import * as os from 'os';
+import * as path from 'path';
+import { promises as fs } from 'fs';
+
+// Use a test-specific keystore to avoid touching user's real keys
+const TEST_KEYSTORE_DIR = path.join(os.tmpdir(), '.cazt-test');
+const TEST_KEYSTORE_FILE = 'test_keys.json';
+
+// Configure test keystore before all tests
+beforeAll(async () => {
+  KeyStore.setCustomPath(TEST_KEYSTORE_DIR, TEST_KEYSTORE_FILE);
+  // Ensure clean test directory
+  try {
+    await fs.rm(TEST_KEYSTORE_DIR, { recursive: true, force: true });
+  } catch {
+    // Ignore if doesn't exist
+  }
+});
+
+// Clean up after all tests
+afterAll(async () => {
+  try {
+    await fs.rm(TEST_KEYSTORE_DIR, { recursive: true, force: true });
+  } catch {
+    // Ignore cleanup errors
+  }
+  KeyStore.resetPath();
+});
 
 // Mock console methods to capture output
 let consoleOutput: string[] = [];
@@ -481,8 +511,79 @@ describe('CLI Commands', () => {
           expect(secretKeysHeaderPos).toBeGreaterThan(0);
           expect(publicKeysHeaderPos).toBeGreaterThan(0);
           expect(secretKeysHeaderPos).toBeLessThan(publicKeysHeaderPos);
-    });
-  });
+        });
+      });
+
+      describe('with --alias option', () => {
+        const testAlias = 'deriveKeysAliasTest';
+
+        beforeEach(async () => {
+          await KeyStore.clear();
+        });
+
+        afterEach(async () => {
+          await KeyStore.clear();
+        });
+
+        it('should derive keys using secret from keystore alias', async () => {
+          // First import a key
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+          // Then derive keys using the alias
+          const output = await executeCommand(['key', 'derive-keys', '--alias', testAlias]);
+
+          expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.header);
+          const secretKeys = extractDerivedSecretKeys(output);
+          expect(secretKeys).not.toBeNull();
+          expect(isValidSecretKey(secretKeys!.masterNullifierSecretKey)).toBe(true);
+        });
+
+        it('should produce same keys as direct secret input', async () => {
+          // Import the key
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+          // Derive using direct secret
+          const directOutput = await executeCommand(['key', 'derive-keys', testSecret]);
+          const directKeys = extractDerivedSecretKeys(directOutput);
+
+          // Derive using alias
+          const aliasOutput = await executeCommand(['key', 'derive-keys', '--alias', testAlias]);
+          const aliasKeys = extractDerivedSecretKeys(aliasOutput);
+
+          expect(directKeys!.masterNullifierSecretKey).toBe(aliasKeys!.masterNullifierSecretKey);
+          expect(directKeys!.masterIncomingViewingSecretKey).toBe(aliasKeys!.masterIncomingViewingSecretKey);
+        });
+
+        it('should fail when alias does not exist', async () => {
+          const output = await executeCommand(['key', 'derive-keys', '--alias', 'nonexistent'], true);
+
+          expect(output).toContain('not found');
+        });
+
+        it('should fail when both secret and alias are provided', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+          const output = await executeCommand(['key', 'derive-keys', testSecret, '--alias', testAlias], true);
+
+          expect(output).toContain('Cannot specify both');
+        });
+
+        it('should fail when neither secret nor alias are provided', async () => {
+          const output = await executeCommand(['key', 'derive-keys'], true);
+
+          expect(output).toContain('Must specify either');
+        });
+
+        it('should work with --public flag and alias', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+          const output = await executeCommand(['key', 'derive-keys', '--alias', testAlias, '--public']);
+
+          expect(output).toMatch(DERIVE_KEYS_TEST_VECTORS.patterns.humanReadable.publicKeysHeader);
+          const publicKeys = extractDerivedPublicKeys(output);
+          expect(publicKeys).not.toBeNull();
+        });
+      });
     });
 
     describe('derive-address subcommand', () => {
@@ -663,7 +764,6 @@ describe('CLI Commands', () => {
           expect(parsed).not.toBeNull();
           expect(parsed.address).toBeDefined();
           expect(await isValidAztecAddress(parsed.address)).toBe(true);
-
         });
       });
 
@@ -762,6 +862,88 @@ describe('CLI Commands', () => {
           expect(parsed.secretKey).toBeUndefined();
         });
       });
+
+      describe('with --alias option', () => {
+        const testAlias = 'deriveAddressAliasTest';
+
+        beforeEach(async () => {
+          await KeyStore.clear();
+        });
+
+        afterEach(async () => {
+          await KeyStore.clear();
+        });
+
+        it('should derive address using secret from keystore alias', async () => {
+          // First import a key
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+          // Then derive address using the alias
+          const output = await executeCommand(['key', 'derive-address', '--alias', testAlias]);
+
+          expect(output).toMatch(DERIVE_ADDRESS_TEST_VECTORS.patterns.humanReadable.header);
+          const address = extractAddress(output);
+          expect(address).not.toBeNull();
+          expect(await isValidAztecAddress(address!)).toBe(true);
+        });
+
+        it('should produce same address as direct secret input', async () => {
+          // Import the key
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+          // Derive using direct secret
+          const directOutput = await executeCommand(['key', 'derive-address', testSecret]);
+          const directAddress = extractAddress(directOutput);
+
+          // Derive using alias
+          const aliasOutput = await executeCommand(['key', 'derive-address', '--alias', testAlias]);
+          const aliasAddress = extractAddress(aliasOutput);
+
+          expect(directAddress).toBe(aliasAddress);
+        });
+
+        it('should fail when alias does not exist', async () => {
+          const output = await executeCommand(['key', 'derive-address', '--alias', 'nonexistent'], true);
+
+          expect(output).toContain('not found');
+        });
+
+        it('should fail when both secret and alias are provided', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+          const output = await executeCommand(['key', 'derive-address', testSecret, '--alias', testAlias], true);
+
+          expect(output).toContain('Cannot specify both');
+        });
+
+        it('should fail when neither secret nor alias are provided', async () => {
+          const output = await executeCommand(['key', 'derive-address'], true);
+
+          expect(output).toContain('Must specify either');
+        });
+
+        it('should work with --salt flag and alias', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+          const output = await executeCommand(['key', 'derive-address', '--alias', testAlias, '--salt', '42']);
+
+          const address = extractAddress(output);
+          expect(address).not.toBeNull();
+          expect(output).toContain('Salt:');
+        });
+
+        it('should derive different addresses with same alias but different salts', async () => {
+          await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+          const output1 = await executeCommand(['key', 'derive-address', '--alias', testAlias, '--salt', '0']);
+          const output2 = await executeCommand(['key', 'derive-address', '--alias', testAlias, '--salt', '1']);
+
+          const address1 = extractAddress(output1);
+          const address2 = extractAddress(output2);
+
+          expect(address1).not.toBe(address2);
+        });
+      });
     });
 
     describe('import subcommand', () => {
@@ -785,7 +967,6 @@ describe('CLI Commands', () => {
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.separator);
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.aliasLabel);
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.secretLabel);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.addressLabel);
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.storedLabel);
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.humanReadable.warningLabel);
       });
@@ -807,15 +988,6 @@ describe('CLI Commands', () => {
 
         const extractedAlias = extractAlias(output);
         expect(extractedAlias).toBe(alias);
-      });
-
-      it('should derive and display the address for the imported key', async () => {
-        const alias = 'addressTest';
-        const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
-
-        const address = extractAddress(output);
-        expect(address).not.toBeNull();
-        expect(await isValidAztecAddress(address!)).toBe(true);
       });
 
       it('should display the keystore path', async () => {
@@ -921,7 +1093,6 @@ describe('CLI Commands', () => {
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.validJson);
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasAlias);
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasSecret);
-        expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasAddress);
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasStored);
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasKeystorePath);
         expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasWarning);
@@ -938,7 +1109,6 @@ describe('CLI Commands', () => {
         expect(parsed).not.toBeNull();
         expect(parsed.alias).toBe(alias);
         expect(parsed.secret).toBe(testSecret);
-        expect(await isValidAztecAddress(parsed.address)).toBe(true);
         expect(parsed.stored).toBe(true);
         expect(parsed.keystorePath).toContain('.cazt');
         expect(parsed.warning).toBe(IMPORT_KEY_TEST_VECTORS.expectedWarning);
@@ -951,12 +1121,10 @@ describe('CLI Commands', () => {
         // Human-readable output should not contain JSON-like formatting
         expect(output).not.toMatch(/"alias"/);
         expect(output).not.toMatch(/"secret"/);
-        expect(output).not.toMatch(/"address"/);
 
         // But should contain the actual labels
         expect(output).toContain('Alias:');
         expect(output).toContain('Secret:');
-        expect(output).toContain('Address:');
       });
 
       it('should persist keys across imports', async () => {
@@ -1019,6 +1187,177 @@ describe('CLI Commands', () => {
         // Commander.js will show an error about the required option
         // The output might contain 'required option' or show undefined alias
         expect(output).toMatch(/required option|alias.*undefined/i);
+      });
+    });
+
+    describe('export subcommand', () => {
+      const testSecret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+      const testAlias = 'exportTest';
+
+      // Clean up keystore before and after each test
+      beforeEach(async () => {
+        await KeyStore.clear();
+      });
+
+      afterEach(async () => {
+        await KeyStore.clear();
+      });
+
+      it('should export a secret key by alias with human-readable output', async () => {
+        // First import a key
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+        // Then export it
+        const output = await executeCommand(['key', 'export', testAlias]);
+
+        // Check for expected output structure
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.separator);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.aliasLabel);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.secretLabel);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.createdLabel);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.updatedLabel);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.humanReadable.warningLabel);
+      });
+
+      it('should export the correct secret key', async () => {
+        // Import a key
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+        // Export it
+        const output = await executeCommand(['key', 'export', testAlias]);
+
+        // Verify the secret matches
+        expect(output).toContain(testSecret);
+      });
+
+      it('should display the correct alias', async () => {
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+        const output = await executeCommand(['key', 'export', testAlias]);
+
+        const extractedAlias = extractAlias(output);
+        expect(extractedAlias).toBe(testAlias);
+      });
+
+      it('should display creation and update timestamps', async () => {
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+        const output = await executeCommand(['key', 'export', testAlias]);
+
+        expect(output).toMatch(/Created:/);
+        expect(output).toMatch(/Updated:/);
+      });
+
+      it('should display the security warning', async () => {
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+        const output = await executeCommand(['key', 'export', testAlias]);
+
+        const warning = extractWarning(output);
+        expect(warning).toBe(EXPORT_KEY_TEST_VECTORS.expectedWarning);
+      });
+
+      it('should fail when exporting non-existent alias', async () => {
+        const output = await executeCommand(['key', 'export', 'nonExistentAlias'], true);
+
+        expect(output).toMatch(/not found/i);
+      });
+
+      it('should export multiple times without changes (idempotent)', async () => {
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+
+        const output1 = await executeCommand(['key', 'export', testAlias]);
+        const output2 = await executeCommand(['key', 'export', testAlias]);
+
+        // Both exports should contain the same secret
+        expect(output1).toContain(testSecret);
+        expect(output2).toContain(testSecret);
+      });
+
+      it('should export keys with various aliases', async () => {
+        const testCases = [
+          { alias: 'key1', secret: '0x0000000000000000000000000000000000000000000000000000000000000001' },
+          { alias: 'key2', secret: '0x0000000000000000000000000000000000000000000000000000000000000042' },
+          { alias: '_private', secret: '0x0000000000000000000000000000000000000000000000000000000000000003' },
+        ];
+
+        for (const testCase of testCases) {
+          await executeCommand(['key', 'import', testCase.secret, '--alias', testCase.alias]);
+          const output = await executeCommand(['key', 'export', testCase.alias]);
+
+          expect(output).toContain(testCase.alias);
+          expect(output).toContain(testCase.secret);
+        }
+      });
+
+      it('should output JSON when --json flag is used', async () => {
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+        const output = await executeCommand(['key', 'export', testAlias, '--json']);
+
+        // Should be valid JSON
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.validJson);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasAlias);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasSecret);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasCreatedAt);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasUpdatedAt);
+        expect(output).toMatch(EXPORT_KEY_TEST_VECTORS.patterns.json.hasWarning);
+
+        const parsed = parseJsonOutput(output);
+        expect(isValidExportedKeyJson(parsed)).toBe(true);
+      });
+
+      it('should produce correct data in JSON format', async () => {
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+        const output = await executeCommand(['key', 'export', testAlias, '--json']);
+
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(parsed.alias).toBe(testAlias);
+        expect(parsed.secret).toBe(testSecret);
+        expect(parsed.createdAt).toBeDefined();
+        expect(parsed.updatedAt).toBeDefined();
+        expect(parsed.warning).toBe(EXPORT_KEY_TEST_VECTORS.expectedWarning);
+      });
+
+      it('should not include JSON formatting in human-readable output', async () => {
+        await executeCommand(['key', 'import', testSecret, '--alias', testAlias]);
+        const output = await executeCommand(['key', 'export', testAlias]);
+
+        // Human-readable output should not contain JSON-like formatting
+        expect(output).not.toMatch(/"alias"/);
+        expect(output).not.toMatch(/"secret"/);
+
+        // But should contain the actual labels
+        expect(output).toContain('Alias:');
+        expect(output).toContain('Secret:');
+      });
+
+      it('should show updated timestamps after import with --force', async () => {
+        const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
+
+        // Import first key
+        await executeCommand(['key', 'import', secret1, '--alias', testAlias]);
+        const output1 = await executeCommand(['key', 'export', testAlias, '--json']);
+        const parsed1 = parseJsonOutput(output1);
+
+        // Wait a bit to ensure timestamp difference
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Overwrite with second key
+        await executeCommand(['key', 'import', secret2, '--alias', testAlias, '--force']);
+        const output2 = await executeCommand(['key', 'export', testAlias, '--json']);
+        const parsed2 = parseJsonOutput(output2);
+
+        // CreatedAt should be the same, updatedAt should be different
+        expect(parsed1.createdAt).toBe(parsed2.createdAt);
+        expect(parsed1.updatedAt).not.toBe(parsed2.updatedAt);
+        expect(parsed2.secret).toBe(secret2);
+      });
+
+      it('should handle empty keystore gracefully', async () => {
+        // Don't import anything, just try to export
+        const output = await executeCommand(['key', 'export', 'someAlias'], true);
+
+        expect(output).toMatch(/not found/i);
       });
     });
   });

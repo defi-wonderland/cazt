@@ -5,6 +5,8 @@ import { AztecAddress } from '@aztec/stdlib/aztec-address';
  * Test utilities and test vectors for CLI tests
  */
 
+import { WARNINGS } from '../cli/constants.js';
+
 /**
  * Validates that a string is a valid hexadecimal secret key
  * @param key - The key string to validate
@@ -70,7 +72,7 @@ export const KEY_TEST_VECTORS = {
   },
 
   // Security warning text
-  expectedWarning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control associated accounts.',
+  expectedWarning: WARNINGS.KEY_GENERATE,
 
   // Seed test cases
   seedTests: [
@@ -445,7 +447,6 @@ export const IMPORT_KEY_TEST_VECTORS = {
       separator: /={50}/,
       aliasLabel: /Alias:/,
       secretLabel: /Secret:/,
-      addressLabel: /Address:/,
       storedLabel: /Stored in:/,
       warningLabel: /WARNING:/,
       keyValue: /0x[0-9a-f]+/i,
@@ -454,7 +455,6 @@ export const IMPORT_KEY_TEST_VECTORS = {
     json: {
       hasAlias: /"alias"\s*:/,
       hasSecret: /"secret"\s*:/,
-      hasAddress: /"address"\s*:/,
       hasStored: /"stored"\s*:/,
       hasKeystorePath: /"keystorePath"\s*:/,
       hasWarning: /"warning"\s*:/,
@@ -463,7 +463,7 @@ export const IMPORT_KEY_TEST_VECTORS = {
   },
 
   // Expected warning text
-  expectedWarning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
+  expectedWarning: WARNINGS.KEY_IMPORT,
 
   // Valid alias test cases
   validAliases: [
@@ -544,11 +544,58 @@ export async function isValidImportedKeyJson(obj: any): Promise<boolean> {
     typeof obj === 'object' &&
     typeof obj.alias === 'string' &&
     typeof obj.secret === 'string' &&
-    typeof obj.address === 'string' &&
     typeof obj.stored === 'boolean' &&
     typeof obj.keystorePath === 'string' &&
     typeof obj.warning === 'string' &&
-    isValidSecretKey(obj.secret) &&
-    await isValidAztecAddress(obj.address)
+    isValidFieldElement(obj.secret)
+  );
+}
+
+/**
+ * Test vectors for key export
+ */
+export const EXPORT_KEY_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Exported Secret Key/,
+      separator: /={50}/,
+      aliasLabel: /Alias:/,
+      secretLabel: /Secret:/,
+      createdLabel: /Created:/,
+      updatedLabel: /Updated:/,
+      warningLabel: /WARNING:/,
+      keyValue: /0x[0-9a-f]+/i,
+      securityWarning: /Handle this secret key carefully/,
+    },
+    json: {
+      hasAlias: /"alias"\s*:/,
+      hasSecret: /"secret"\s*:/,
+      hasCreatedAt: /"createdAt"\s*:/,
+      hasUpdatedAt: /"updatedAt"\s*:/,
+      hasWarning: /"warning"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+
+  // Expected warning text
+  expectedWarning: WARNINGS.KEY_EXPORT,
+};
+
+/**
+ * Validates the structure of an ExportedKey JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidExportedKeyJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.alias === 'string' &&
+    typeof obj.secret === 'string' &&
+    typeof obj.createdAt === 'string' &&
+    typeof obj.updatedAt === 'string' &&
+    typeof obj.warning === 'string' &&
+    isValidFieldElement(obj.secret)
   );
 }

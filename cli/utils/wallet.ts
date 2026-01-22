@@ -7,6 +7,7 @@ import { deriveKeys } from '@aztec/stdlib/keys';
 import { randomBytes } from '@aztec/foundation/crypto';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
 import { KeyStore } from './keystore.js';
+import { WARNINGS } from '../constants.js';
 
 /**
  * Check if a string looks like a hex field value or numeric string
@@ -24,6 +25,29 @@ function passphraseToSecretKey(passphrase: string): Fr {
   const padded = passphrase.padEnd(32, '#');
   const buffer = Buffer.from(padded, 'utf-8');
   return Fr.fromBufferReduce(buffer);
+}
+
+/**
+ * Resolve a secret key from either a direct input or an alias
+ * @param secret - Direct secret key (optional)
+ * @param alias - Alias to load from keystore (optional)
+ * @returns The resolved secret key string
+ * @throws Error if neither or both are provided
+ */
+export async function resolveSecret(secret?: string, alias?: string): Promise<string> {
+  if (secret && alias) {
+    throw new Error('Cannot specify both <secret> and --alias. Use one or the other.');
+  }
+  if (!secret && !alias) {
+    throw new Error('Must specify either <secret> or --alias <name>.');
+  }
+
+  if (alias) {
+    const storedKey = await KeyStore.load(alias);
+    return storedKey.secret;
+  }
+
+  return secret!;
 }
 
 /**
@@ -58,9 +82,19 @@ export interface DerivedKeys {
 export interface ImportedKey {
   alias: string;
   secret: string;
-  address: string;
   stored: boolean;
   keystorePath: string;
+  warning: string;
+}
+
+/**
+ * Result type for key export
+ */
+export interface ExportedKey {
+  alias: string;
+  secret: string;
+  createdAt: string;
+  updatedAt: string;
   warning: string;
 }
 
@@ -77,7 +111,7 @@ export class WalletUtils {
 
     return {
       secretKey: secretKey.toString(),
-      warning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control associated accounts.',
+      warning: WARNINGS.KEY_GENERATE,
     };
   }
 
@@ -169,19 +203,33 @@ export class WalletUtils {
       );
     }
 
-    // Derive the address for this key
-    const { address } = await this.deriveAddress(normalizedSecret);
-
     // Store the key in the keystore
     await KeyStore.save(alias, normalizedSecret, force);
 
     return {
       alias,
       secret: normalizedSecret,
-      address,
       stored: true,
       keystorePath: KeyStore.getKeysFilePath(),
-      warning: 'SECURITY WARNING: Your secret key is stored locally. Ensure proper file permissions and backup.',
+      warning: WARNINGS.KEY_IMPORT,
+    };
+  }
+
+  /**
+   * Export a secret key by its alias from local storage
+   * @param alias - Alias of the key to export
+   * @returns Information about the exported key including timestamps
+   */
+  static async exportKey(alias: string): Promise<ExportedKey> {
+    // Load the key from keystore
+    const storedKey = await KeyStore.load(alias);
+
+    return {
+      alias: storedKey.alias,
+      secret: storedKey.secret,
+      createdAt: storedKey.createdAt,
+      updatedAt: storedKey.updatedAt,
+      warning: WARNINGS.KEY_EXPORT,
     };
   }
 }
