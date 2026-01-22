@@ -21,6 +21,15 @@ import {
   isValidImportedKeyJson,
   EXPORT_KEY_TEST_VECTORS,
   isValidExportedKeyJson,
+  verifySchnorrSignature,
+  extractSignature,
+  extractPublicKey,
+  extractMessage,
+  isValidSignedMessageJson,
+  SIGN_MESSAGE_TEST_VECTORS,
+  extractValid,
+  isValidVerifiedSignatureJson,
+  VERIFY_SIGNATURE_TEST_VECTORS,
 } from './utils.js';
 import { KeyStore } from '../cli/utils/keystore.js';
 import * as os from 'os';
@@ -305,11 +314,6 @@ describe('CLI Commands', () => {
         const secretKeys = extractDerivedSecretKeys(output);
 
         expect(secretKeys).not.toBeNull();
-        expect(isValidFieldElement(secretKeys!.masterNullifierSecretKey)).toBe(true);
-        expect(isValidFieldElement(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
-        expect(isValidFieldElement(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
-        expect(isValidFieldElement(secretKeys!.masterTaggingSecretKey)).toBe(true);
-
         expect(isValidFieldElement(secretKeys!.masterNullifierSecretKey)).toBe(true);
         expect(isValidFieldElement(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
         expect(isValidFieldElement(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
@@ -663,6 +667,7 @@ describe('CLI Commands', () => {
 
           expect(address).not.toBeNull();
           expect(await isValidAztecAddress(address!)).toBe(true);
+
         }
       });
 
@@ -998,10 +1003,10 @@ describe('CLI Commands', () => {
         const alias = 'pathTest';
         const output = await executeCommand(['key', 'import', testSecret, '--alias', alias]);
 
-        const path = extractKeystorePath(output);
-        expect(path).not.toBeNull();
-        expect(path).toContain('.cazt');
-        expect(path).toContain('keys_test.json');
+        const keystorePath = extractKeystorePath(output);
+        expect(keystorePath).not.toBeNull();
+        expect(keystorePath).toContain('.cazt');
+        expect(keystorePath).toContain('keys_test.json');
       });
 
       it('should display the security warning', async () => {
@@ -1652,6 +1657,577 @@ describe('CLI Commands', () => {
         for (let i = 0; i < 10; i++) {
           expect(parsed.aliases).toContain(`key${i}`);
         }
+      });
+    });
+
+    describe('sign subcommand', () => {
+      it('should sign a message with human-readable output', async () => {
+        const message = 'hello';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        const output = await executeCommand(['key', 'sign', message, secret]);
+
+        // Check for expected output structure
+        expect(output).toMatch(SIGN_MESSAGE_TEST_VECTORS.patterns.humanReadable.header);
+        expect(output).toMatch(SIGN_MESSAGE_TEST_VECTORS.patterns.humanReadable.separator);
+        expect(output).toMatch(SIGN_MESSAGE_TEST_VECTORS.patterns.humanReadable.messageLabel);
+        expect(output).toMatch(SIGN_MESSAGE_TEST_VECTORS.patterns.humanReadable.signatureLabel);
+        expect(output).toMatch(SIGN_MESSAGE_TEST_VECTORS.patterns.humanReadable.publicKeyLabel);
+
+        // Extract and validate components
+        const extractedMessage = extractMessage(output);
+        const signature = extractSignature(output);
+        const publicKey = extractPublicKey(output);
+
+        expect(extractedMessage).toBe(message);
+        expect(signature).not.toBeNull();
+        expect(publicKey).not.toBeNull();
+        expect(await verifySchnorrSignature(message, signature!, publicKey!)).toBe(true);
+      });
+
+      it('should produce valid signatures for same message and key', async () => {
+        const message = 'test message';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000042';
+
+        const output1 = await executeCommand(['key', 'sign', message, secret]);
+        const output2 = await executeCommand(['key', 'sign', message, secret]);
+
+        const signature1 = extractSignature(output1);
+        const signature2 = extractSignature(output2);
+        const publicKey1 = extractPublicKey(output1);
+        const publicKey2 = extractPublicKey(output2);
+
+        // Both signatures should be cryptographically valid
+        expect(signature1).not.toBeNull();
+        expect(signature2).not.toBeNull();
+        expect(await verifySchnorrSignature(message, signature1!, publicKey1!)).toBe(true);
+        expect(await verifySchnorrSignature(message, signature2!, publicKey2!)).toBe(true);
+
+        // Same secret should produce same public key
+        expect(publicKey1).toBe(publicKey2);
+
+        // Note: Schnorr signatures may use random nonces, so signatures could differ
+        // This is normal and doesn't indicate an issue with the implementation
+      });
+
+      it('should produce different signatures for different messages', async () => {
+        const message1 = 'first message';
+        const message2 = 'second message';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        const output1 = await executeCommand(['key', 'sign', message1, secret]);
+        const output2 = await executeCommand(['key', 'sign', message2, secret]);
+
+        const signature1 = extractSignature(output1);
+        const signature2 = extractSignature(output2);
+
+        // Different messages should produce different signatures
+        expect(signature1).not.toBe(signature2);
+      });
+
+      it('should produce different signatures for different keys', async () => {
+        const message = 'same message';
+        const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
+
+        const output1 = await executeCommand(['key', 'sign', message, secret1]);
+        const output2 = await executeCommand(['key', 'sign', message, secret2]);
+
+        const signature1 = extractSignature(output1);
+        const signature2 = extractSignature(output2);
+        const publicKey1 = extractPublicKey(output1);
+        const publicKey2 = extractPublicKey(output2);
+
+        // Different keys should produce different signatures and public keys
+        expect(signature1).not.toBe(signature2);
+        expect(publicKey1).not.toBe(publicKey2);
+      });
+
+      it('should handle various string messages', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        for (const testCase of SIGN_MESSAGE_TEST_VECTORS.testMessages) {
+          const output = await executeCommand(['key', 'sign', testCase.message, secret]);
+
+          const extractedMessage = extractMessage(output);
+          const signature = extractSignature(output);
+          const publicKey = extractPublicKey(output);
+
+          expect(extractedMessage).toBe(testCase.message);
+          expect(signature).not.toBeNull();
+          expect(publicKey).not.toBeNull();
+          expect(await verifySchnorrSignature(testCase.message, signature!, publicKey!)).toBe(true);
+        }
+      });
+
+      it('should handle hex-encoded byte messages', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        for (const testCase of SIGN_MESSAGE_TEST_VECTORS.testHexMessages) {
+          const output = await executeCommand(['key', 'sign', testCase.message, secret]);
+
+          const extractedMessage = extractMessage(output);
+          const signature = extractSignature(output);
+          const publicKey = extractPublicKey(output);
+
+          expect(extractedMessage).toBe(testCase.message);
+          expect(signature).not.toBeNull();
+          expect(publicKey).not.toBeNull();
+          expect(await verifySchnorrSignature(testCase.message, signature!, publicKey!)).toBe(true);
+        }
+      });
+
+      it('should handle both string and hex-encoded bytes for same content', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const stringMessage = 'hello';
+        const hexMessage = '0x68656c6c6f'; // "hello" in hex
+
+        const output1 = await executeCommand(['key', 'sign', stringMessage, secret]);
+        const output2 = await executeCommand(['key', 'sign', hexMessage, secret]);
+
+        const signature1 = extractSignature(output1);
+        const signature2 = extractSignature(output2);
+        const publicKey1 = extractPublicKey(output1);
+        const publicKey2 = extractPublicKey(output2);
+
+        // Both should be cryptographically valid signatures
+        expect(signature1).not.toBeNull();
+        expect(signature2).not.toBeNull();
+        expect(await verifySchnorrSignature(stringMessage, signature1!, publicKey1!)).toBe(true);
+        expect(await verifySchnorrSignature(hexMessage, signature2!, publicKey2!)).toBe(true);
+
+        // Same secret should produce same public key
+        expect(publicKey1).toBe(publicKey2);
+
+        // Note: Even though the bytes are the same, signatures may differ due to random nonces
+      });
+
+      it('should output JSON when --json flag is used', async () => {
+        const message = 'test message';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        const output = await executeCommand(['key', 'sign', message, secret, '--json']);
+
+        // Should be valid JSON
+        const parsed = parseJsonOutput(output);
+        expect(parsed).not.toBeNull();
+        expect(isValidSignedMessageJson(parsed)).toBe(true);
+
+        // Check structure
+        expect(parsed.message).toBe(message);
+        expect(parsed.signature).toBeDefined();
+        expect(parsed.publicKey).toBeDefined();
+        expect(await verifySchnorrSignature(message, parsed.signature, parsed.publicKey)).toBe(true);
+      });
+
+      it('should handle different secret key formats', async () => {
+        const message = 'test';
+
+        for (const testCase of SIGN_MESSAGE_TEST_VECTORS.testSecrets) {
+          const output = await executeCommand(['key', 'sign', message, testCase.secret]);
+
+          const signature = extractSignature(output);
+          const publicKey = extractPublicKey(output);
+
+          expect(signature).not.toBeNull();
+          expect(publicKey).not.toBeNull();
+          expect(await verifySchnorrSignature(message, signature!, publicKey!)).toBe(true);
+        }
+      });
+
+      it('should treat non-hex strings as passphrases', async () => {
+        const message = 'test';
+        const passphrase = 'my-secret-passphrase';
+
+        const output = await executeCommand(['key', 'sign', message, passphrase]);
+
+        // Passphrase should be treated as valid and produce a signature
+        const signature = extractSignature(output);
+        expect(signature).toBeDefined();
+        expect(signature).toMatch(/^0x[0-9a-f]+$/i);
+
+        // Should show the derived secret key
+        expect(output).toContain('Secret Key (derived from passphrase)');
+      });
+
+      it('should treat 0x-prefixed non-hex as UTF-8 string', async () => {
+        const message = '0xhello'; // Not valid hex, treated as UTF-8 string
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        const output = await executeCommand(['key', 'sign', message, secret]);
+
+        // Should succeed by treating the message as a UTF-8 string
+        const signature = extractSignature(output);
+        const publicKey = extractPublicKey(output);
+
+        expect(signature).not.toBeNull();
+        expect(publicKey).not.toBeNull();
+        expect(await verifySchnorrSignature(message, signature!, publicKey!)).toBe(true);
+      });
+
+      it('should fail when secret option is missing', async () => {
+        const message = 'test';
+
+        const output = await executeCommand(['key', 'sign', message], true);
+
+        // Should fail with an error about invalid secret key (undefined)
+        expect(output).toMatch(/Invalid secret key|secret/i);
+      });
+
+      it('should produce consistent public key for same secret', async () => {
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const message1 = 'first';
+        const message2 = 'second';
+
+        const output1 = await executeCommand(['key', 'sign', message1, secret]);
+        const output2 = await executeCommand(['key', 'sign', message2, secret]);
+
+        const publicKey1 = extractPublicKey(output1);
+        const publicKey2 = extractPublicKey(output2);
+
+        // Same secret should always produce same public key
+        expect(publicKey1).toBe(publicKey2);
+      });
+
+      it('should handle empty message', async () => {
+        const message = '';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        const output = await executeCommand(['key', 'sign', message, secret]);
+
+        const signature = extractSignature(output);
+        const publicKey = extractPublicKey(output);
+
+        expect(signature).not.toBeNull();
+        expect(publicKey).not.toBeNull();
+        expect(await verifySchnorrSignature(message, signature!, publicKey!)).toBe(true);
+      });
+
+      it('should not include JSON formatting in human-readable output', async () => {
+        const message = 'test';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        const output = await executeCommand(['key', 'sign', message, secret]);
+
+        // Human-readable output should not contain JSON-like formatting
+        expect(output).not.toMatch(/"message"/);
+        expect(output).not.toMatch(/"signature"/);
+        expect(output).not.toMatch(/"publicKey"/);
+
+        // But should contain the actual values
+        const signature = extractSignature(output);
+        const publicKey = extractPublicKey(output);
+        expect(signature).not.toBeNull();
+        expect(publicKey).not.toBeNull();
+      });
+    });
+
+    describe('verify subcommand', () => {
+      it('should verify a valid signature with human-readable output', async () => {
+        const message = 'hello';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        // First sign a message to get a valid signature
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
+        const signature = extractSignature(signOutput);
+        const publicKey = extractPublicKey(signOutput);
+
+        // Now verify it
+        const verifyOutput = await executeCommand([
+          'key',
+          'verify',
+          message,
+          '--sig',
+          signature!,
+          '--pubkey',
+          publicKey!,
+        ]);
+
+        // Check for expected output structure
+        expect(verifyOutput).toMatch(VERIFY_SIGNATURE_TEST_VECTORS.patterns.humanReadable.header);
+        expect(verifyOutput).toMatch(VERIFY_SIGNATURE_TEST_VECTORS.patterns.humanReadable.separator);
+        expect(verifyOutput).toMatch(VERIFY_SIGNATURE_TEST_VECTORS.patterns.humanReadable.messageLabel);
+        expect(verifyOutput).toMatch(VERIFY_SIGNATURE_TEST_VECTORS.patterns.humanReadable.signatureLabel);
+        expect(verifyOutput).toMatch(VERIFY_SIGNATURE_TEST_VECTORS.patterns.humanReadable.publicKeyLabel);
+        expect(verifyOutput).toMatch(VERIFY_SIGNATURE_TEST_VECTORS.patterns.humanReadable.validLabel);
+        expect(verifyOutput).toMatch(VERIFY_SIGNATURE_TEST_VECTORS.patterns.humanReadable.validYes);
+
+        // Extract and validate components
+        const valid = extractValid(verifyOutput);
+        expect(valid).toBe(true);
+      });
+
+      it('should reject an invalid signature (wrong message)', async () => {
+        const message = 'hello';
+        const wrongMessage = 'goodbye';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        // Sign with one message
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
+        const signature = extractSignature(signOutput);
+        const publicKey = extractPublicKey(signOutput);
+
+        // Verify with different message
+        const verifyOutput = await executeCommand(
+          ['key', 'verify', wrongMessage, '--sig', signature!, '--pubkey', publicKey!],
+          true
+        );
+
+        expect(verifyOutput).toMatch(VERIFY_SIGNATURE_TEST_VECTORS.patterns.humanReadable.validNo);
+        const valid = extractValid(verifyOutput);
+        expect(valid).toBe(false);
+      });
+
+      it('should reject an invalid signature (wrong public key)', async () => {
+        const message = 'hello';
+        const secret1 = '0x0000000000000000000000000000000000000000000000000000000000000001';
+        const secret2 = '0x0000000000000000000000000000000000000000000000000000000000000042';
+
+        // Sign with secret1
+        const signOutput = await executeCommand(['key', 'sign', message, secret1]);
+        const signature = extractSignature(signOutput);
+
+        // Get public key from secret2
+        const signOutput2 = await executeCommand(['key', 'sign', 'test', secret2]);
+        const wrongPublicKey = extractPublicKey(signOutput2);
+
+        // Verify with wrong public key
+        const verifyOutput = await executeCommand(
+          ['key', 'verify', message, '--sig', signature!, '--pubkey', wrongPublicKey!],
+          true
+        );
+
+        expect(verifyOutput).toMatch(VERIFY_SIGNATURE_TEST_VECTORS.patterns.humanReadable.validNo);
+        const valid = extractValid(verifyOutput);
+        expect(valid).toBe(false);
+      });
+
+      it('should reject a tampered signature', async () => {
+        const message = 'hello';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        // Sign a message
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
+        const signature = extractSignature(signOutput);
+        const publicKey = extractPublicKey(signOutput);
+
+        // Tamper with signature (flip last byte)
+        const tamperedSig = signature!.slice(0, -2) + 'ff';
+
+        // Verify tampered signature
+        const verifyOutput = await executeCommand(
+          ['key', 'verify', message, '--sig', tamperedSig, '--pubkey', publicKey!],
+          true
+        );
+
+        const valid = extractValid(verifyOutput);
+        expect(valid).toBe(false);
+      });
+
+      it('should verify hex-encoded byte messages', async () => {
+        const hexMessage = '0xdeadbeef';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        // Sign hex message
+        const signOutput = await executeCommand(['key', 'sign', hexMessage, secret]);
+        const signature = extractSignature(signOutput);
+        const publicKey = extractPublicKey(signOutput);
+
+        // Verify it
+        const verifyOutput = await executeCommand([
+          'key',
+          'verify',
+          hexMessage,
+          '--sig',
+          signature!,
+          '--pubkey',
+          publicKey!,
+        ]);
+
+        const valid = extractValid(verifyOutput);
+        expect(valid).toBe(true);
+      });
+
+      it('should verify empty message', async () => {
+        const message = '';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        // Sign empty message
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
+        const signature = extractSignature(signOutput);
+        const publicKey = extractPublicKey(signOutput);
+
+        // Verify it
+        const verifyOutput = await executeCommand([
+          'key',
+          'verify',
+          message,
+          '--sig',
+          signature!,
+          '--pubkey',
+          publicKey!,
+        ]);
+
+        const valid = extractValid(verifyOutput);
+        expect(valid).toBe(true);
+      });
+
+      it('should output JSON when --json flag is used', async () => {
+        const message = 'test message';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        // Sign a message
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
+        const signature = extractSignature(signOutput);
+        const publicKey = extractPublicKey(signOutput);
+
+        // Verify with JSON output
+        const verifyOutput = await executeCommand([
+          'key',
+          'verify',
+          message,
+          '--sig',
+          signature!,
+          '--pubkey',
+          publicKey!,
+          '--json',
+        ]);
+
+        // Should be valid JSON
+        const parsed = parseJsonOutput(verifyOutput);
+        expect(parsed).not.toBeNull();
+        expect(isValidVerifiedSignatureJson(parsed)).toBe(true);
+
+        // Check structure
+        expect(parsed.message).toBe(message);
+        expect(parsed.signature).toBe(signature);
+        expect(parsed.publicKey).toBe(publicKey);
+        expect(parsed.valid).toBe(true);
+      });
+
+      it('should fail with invalid signature format', async () => {
+        const message = 'test';
+        const invalidSig = 'not-a-signature';
+        const publicKey =
+          '0x00000000000000000000000000000000000000000000000000000000000000010000000000000002cf135e7506a45d632d270d45f1181294833fc48d823f272c';
+
+        const output = await executeCommand(
+          ['key', 'verify', message, '--sig', invalidSig, '--pubkey', publicKey],
+          true
+        );
+
+        expect(output).toMatch(/Invalid signature/i);
+      });
+
+      it('should fail with invalid public key format', async () => {
+        const message = 'test';
+        const signature =
+          '0x0001cf7970b124d37a3aeefc596735067d16d4d886438c2778cf7c0207cbac4092fcf59fc11fe9fac0765bbb94c71e91a471257248d39badf81a8065ba8c0996';
+        const invalidPubkey = 'not-a-pubkey';
+
+        const output = await executeCommand(
+          ['key', 'verify', message, '--sig', signature, '--pubkey', invalidPubkey],
+          true
+        );
+
+        expect(output).toMatch(/Invalid public key/i);
+      });
+
+      it('should treat 0x-prefixed non-hex as UTF-8 string', async () => {
+        const message = '0xhello'; // Not valid hex, treated as UTF-8 string
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        // First sign the message
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
+        const signature = extractSignature(signOutput);
+        const publicKey = extractPublicKey(signOutput);
+
+        // Verify should succeed
+        const output = await executeCommand([
+          'key',
+          'verify',
+          message,
+          '--sig',
+          signature!,
+          '--pubkey',
+          publicKey!,
+        ]);
+
+        expect(output).toContain('Valid: ✓ YES');
+      });
+
+      it('should verify string and hex-encoded bytes produce same result', async () => {
+        const stringMessage = 'hello';
+        const hexMessage = '0x68656c6c6f'; // "hello" in hex
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        // Sign string message
+        const signOutput1 = await executeCommand(['key', 'sign', stringMessage, secret]);
+        const signature1 = extractSignature(signOutput1);
+        const publicKey1 = extractPublicKey(signOutput1);
+
+        // Verify with hex-encoded version (should work because they're the same bytes)
+        const verifyOutput1 = await executeCommand([
+          'key',
+          'verify',
+          hexMessage,
+          '--sig',
+          signature1!,
+          '--pubkey',
+          publicKey1!,
+        ]);
+
+        const valid1 = extractValid(verifyOutput1);
+        expect(valid1).toBe(true);
+
+        // Sign hex message
+        const signOutput2 = await executeCommand(['key', 'sign', hexMessage, secret]);
+        const signature2 = extractSignature(signOutput2);
+        const publicKey2 = extractPublicKey(signOutput2);
+
+        // Verify with string version (should work because they're the same bytes)
+        const verifyOutput2 = await executeCommand([
+          'key',
+          'verify',
+          stringMessage,
+          '--sig',
+          signature2!,
+          '--pubkey',
+          publicKey2!,
+        ]);
+
+        const valid2 = extractValid(verifyOutput2);
+        expect(valid2).toBe(true);
+      });
+
+      it('should not include JSON formatting in human-readable output', async () => {
+        const message = 'test';
+        const secret = '0x0000000000000000000000000000000000000000000000000000000000000001';
+
+        // Sign and verify
+        const signOutput = await executeCommand(['key', 'sign', message, secret]);
+        const signature = extractSignature(signOutput);
+        const publicKey = extractPublicKey(signOutput);
+
+        const verifyOutput = await executeCommand([
+          'key',
+          'verify',
+          message,
+          '--sig',
+          signature!,
+          '--pubkey',
+          publicKey!,
+        ]);
+
+        // Human-readable output should not contain JSON-like formatting
+        expect(verifyOutput).not.toMatch(/"message"/);
+        expect(verifyOutput).not.toMatch(/"signature"/);
+        expect(verifyOutput).not.toMatch(/"publicKey"/);
+        expect(verifyOutput).not.toMatch(/"valid"/);
+
+        // But should contain the validation result
+        const valid = extractValid(verifyOutput);
+        expect(valid).not.toBeNull();
       });
     });
   });

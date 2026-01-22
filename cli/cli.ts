@@ -312,6 +312,73 @@ keyCmd
     }
   });
 
+keyCmd
+  .command('sign <message> [secret]')
+  .description('Sign a message with Schnorr signature (strings or hex bytes with 0x prefix)')
+  .option('--alias <name>', 'Alias of the secret key to use from keystore')
+  .action(async (message: string, secret: string | undefined, options: { alias?: string }) => {
+    try {
+      const { WalletUtils, resolveSecret } = await import('./utils/wallet.js');
+      const resolvedSecret = await resolveSecret(secret, options.alias);
+      const result = await WalletUtils.signMessage(message, resolvedSecret);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Schnorr Signature');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Message: ${result.message}`);
+        console.log('');
+        if (result.derivedSecretKey) {
+          console.log(`Secret Key (derived from passphrase): ${result.derivedSecretKey}`);
+          console.log('');
+        }
+        console.log(`Signature: ${result.signature}`);
+        console.log('');
+        console.log(`Public Key: ${result.publicKey}`);
+      }
+    } catch (error: any) {
+      console.error(`Error signing message: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+keyCmd
+  .command('verify <message>')
+  .description('Verify a Schnorr signature (strings or hex bytes with 0x prefix)')
+  .requiredOption('--sig <signature>', 'Signature to verify (hex string)')
+  .requiredOption('--pubkey <key>', 'Public key to verify against (hex string)')
+  .action(async (message: string, options: { sig: string; pubkey: string }) => {
+    try {
+      const { WalletUtils } = await import('./utils/wallet.js');
+      const result = await WalletUtils.verifySignature(message, options.sig, options.pubkey);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Schnorr Signature Verification');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Message: ${result.message}`);
+        console.log('');
+        console.log(`Signature: ${result.signature}`);
+        console.log('');
+        console.log(`Public Key: ${result.publicKey}`);
+        console.log('');
+        console.log(`Valid: ${result.valid ? '✓ YES' : '✗ NO'}`);
+      }
+
+      // Exit with non-zero code if signature is invalid (useful for scripting)
+      if (!result.valid) {
+        process.exit(1);
+      }
+    } catch (error: any) {
+      console.error(`Error verifying signature: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 

@@ -2,9 +2,10 @@
  * Wallet utility functions for key management
  */
 
-import { Fr } from '@aztec/foundation/fields';
+import { Fr, Fq, Point } from '@aztec/foundation/fields';
 import { deriveKeys } from '@aztec/stdlib/keys';
-import { randomBytes } from '@aztec/foundation/crypto';
+import { randomBytes, Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
+import { poseidon2Hash } from '@aztec/foundation/crypto/sync';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
 import { KeyStore } from './keystore.js';
 import { WARNINGS } from '../constants.js';
@@ -17,14 +18,33 @@ function isHexOrNumericString(str: string): boolean {
 }
 
 /**
+ * Convert a message string to a Buffer
+ * If message starts with 0x and is valid hex, treat as hex-encoded bytes
+ * Otherwise, treat as a UTF-8 string (including strings like "0xhello")
+ */
+function messageToBuffer(message: string): Buffer {
+  if (message.startsWith('0x')) {
+    const hexStr = message.slice(2);
+    // Check if it's valid hex - if so, treat as bytes; otherwise treat as UTF-8 string
+    if (/^[0-9a-fA-F]*$/.test(hexStr) && hexStr.length > 0) {
+      return Buffer.from(hexStr, 'hex');
+    }
+  }
+  // Treat as UTF-8 string
+  return Buffer.from(message, 'utf8');
+}
+
+/**
  * Convert a string passphrase to a secret key
- * Pads the string to 32 characters with '#' and converts to field element
+ * Pads the string to 32 characters with '#' and hashes with Poseidon2
  */
 function passphraseToSecretKey(passphrase: string): Fr {
   // Pad with '#' to 32 characters (right-pad)
   const padded = passphrase.padEnd(32, '#');
   const buffer = Buffer.from(padded, 'utf-8');
-  return Fr.fromBufferReduce(buffer);
+  const fieldElement = Fr.fromBufferReduce(buffer);
+  // Hash with Poseidon2 for proper key derivation
+  return poseidon2Hash([fieldElement]);
 }
 
 /**
@@ -103,6 +123,25 @@ export interface ExportedKey {
  */
 export interface ListedKeys {
   aliases: string[];
+}
+
+/**
+ * Result type for signing a message
+ */
+export interface SignedMessage {
+  message: string;
+  signature: string;
+  publicKey: string;
+}
+
+/**
+ * Result type for verifying a signature
+ */
+export interface VerifiedSignature {
+  message: string;
+  signature: string;
+  publicKey: string;
+  valid: boolean;
 }
 
 /**
@@ -251,6 +290,98 @@ export class WalletUtils {
     // Extract just the aliases and return
     return {
       aliases: storedKeys.map(k => k.alias),
+    };
+  }
+
+  /**
+   * Sign a message using Schnorr signature
+   * @param message - The message to sign (string or hex-encoded bytes with 0x prefix)
+   * @param secretKeyStr - Secret key as a string (hex or decimal) or passphrase
+   * @returns The signed message with signature, public key, and optionally the derived secret key
+   */
+  static async signMessage(message: string, secretKeyStr: string): Promise<SignedMessage & { derivedSecretKey?: string }> {
+    // Validate and convert the secret key to Fr first
+    let secretKeyFr: Fr;
+    let derivedSecretKey: string | undefined;
+    
+    // If it's not a hex/numeric string, treat it as a passphrase
+    if (!isHexOrNumericString(secretKeyStr)) {
+      secretKeyFr = passphraseToSecretKey(secretKeyStr);
+      derivedSecretKey = secretKeyFr.toString();
+    } else {
+      try {
+        secretKeyFr = Fr.fromString(secretKeyStr);
+      } catch (error: any) {
+        throw new Error(`Invalid secret key: ${error.message}`);
+      }
+    }
+
+    // Convert Fr to Fq (GrumpkinScalar) for Schnorr operations
+    // We do this by converting to buffer and back
+    const secretKey = Fq.fromBuffer(secretKeyFr.toBuffer());
+
+    // Convert the message to a buffer
+    const messageBuffer = messageToBuffer(message);
+
+    // Create a Schnorr signer instance
+    const schnorr = new Schnorr();
+
+    // Compute the public key from the private key
+    const publicKey = await schnorr.computePublicKey(secretKey);
+
+    // Sign the message
+    const signature = await schnorr.constructSignature(messageBuffer, secretKey);
+
+    return {
+      message,
+      signature: signature.toString(),
+      publicKey: publicKey.toString(),
+      ...(derivedSecretKey && { derivedSecretKey }),
+    };
+  }
+
+  /**
+   * Verify a Schnorr signature
+   * @param message - The message that was signed (string or hex-encoded bytes with 0x prefix)
+   * @param signatureStr - The signature to verify (hex string)
+   * @param publicKeyStr - The public key to verify against (hex string)
+   * @returns The verification result with message, signature, public key, and validity
+   */
+  static async verifySignature(
+    message: string,
+    signatureStr: string,
+    publicKeyStr: string
+  ): Promise<VerifiedSignature> {
+    // Validate and parse the signature
+    let signature: SchnorrSignature;
+    try {
+      signature = SchnorrSignature.fromString(signatureStr);
+    } catch (error: any) {
+      throw new Error(`Invalid signature: ${error.message}`);
+    }
+
+    // Validate and parse the public key
+    let publicKey: Point;
+    try {
+      publicKey = Point.fromString(publicKeyStr);
+    } catch (error: any) {
+      throw new Error(`Invalid public key: ${error.message}`);
+    }
+
+    // Convert the message to a buffer
+    const messageBuffer = messageToBuffer(message);
+
+    // Create a Schnorr verifier instance
+    const schnorr = new Schnorr();
+
+    // Verify the signature
+    const valid = await schnorr.verifySignature(messageBuffer, publicKey, signature);
+
+    return {
+      message,
+      signature: signatureStr,
+      publicKey: publicKeyStr,
+      valid,
     };
   }
 }

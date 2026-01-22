@@ -5,6 +5,8 @@ import { AztecAddress } from '@aztec/stdlib/aztec-address';
  * Test utilities and test vectors for CLI tests
  */
 
+import { Point } from '@aztec/foundation/fields';
+import { Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
 import { WARNINGS } from '../cli/constants.js';
 
 /**
@@ -599,3 +601,215 @@ export function isValidExportedKeyJson(obj: any): boolean {
     isValidFieldElement(obj.secret)
   );
 }
+
+
+/**
+ * Convert a message string to a Buffer (same logic as in wallet.ts)
+ * If message starts with 0x and is valid hex, treat as hex-encoded bytes
+ * Otherwise, treat as a UTF-8 string
+ */
+function messageToBuffer(message: string): Buffer {
+  if (message.startsWith('0x')) {
+    const hexStr = message.slice(2);
+    if (/^[0-9a-fA-F]*$/.test(hexStr) && hexStr.length > 0) {
+      return Buffer.from(hexStr, 'hex');
+    }
+  }
+  return Buffer.from(message, 'utf8');
+}
+
+/**
+ * Cryptographically verifies a Schnorr signature using the Aztec library
+ * @param message - The message that was signed
+ * @param signature - The signature string (hex)
+ * @param publicKey - The public key string (hex)
+ * @returns true if the signature is cryptographically valid
+ */
+export async function verifySchnorrSignature(
+  message: string,
+  signature: string,
+  publicKey: string
+): Promise<boolean> {
+  try {
+    const sig = SchnorrSignature.fromString(signature);
+    const pubKey = Point.fromString(publicKey);
+    const messageBuffer = messageToBuffer(message);
+    const schnorr = new Schnorr();
+    return await schnorr.verifySignature(messageBuffer, pubKey, sig);
+  } catch {
+    return false;
+  }
+}
+
+
+/**
+ * Extracts the signature from human-readable CLI output
+ * @param output - The CLI output string
+ * @returns The extracted signature or null if not found
+ */
+export function extractSignature(output: string): string | null {
+  const match = output.match(/Signature:\s*(0x[0-9a-f]{128})/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Extracts the public key from human-readable CLI output
+ * @param output - The CLI output string
+ * @returns The extracted public key or null if not found
+ */
+export function extractPublicKey(output: string): string | null {
+  const match = output.match(/Public Key:\s*(0x[0-9a-f]{128})/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Extracts the message from human-readable sign CLI output
+ * @param output - The CLI output string
+ * @returns The extracted message or null if not found (empty string is valid)
+ */
+export function extractMessage(output: string): string | null {
+  // Match "Message: " followed by content up to double newline before "Signature:"
+  // Format is: "Message: <content>\n\nSignature:"
+  const match = output.match(/Message:\s*(.*?)\n\nSignature:/s);
+  if (match) {
+    // Return the captured content, trimmed (will be empty string for empty messages)
+    return match[1].trim();
+  }
+  return null;
+}
+
+/**
+ * Validates the structure of a SignedMessage JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidSignedMessageJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.message === 'string' &&
+    typeof obj.signature === 'string' &&
+    typeof obj.publicKey === 'string'
+  );
+}
+
+/**
+ * Test vectors for message signing
+ */
+export const SIGN_MESSAGE_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Schnorr Signature/,
+      separator: /={50}/,
+      messageLabel: /Message:/,
+      signatureLabel: /Signature:/,
+      publicKeyLabel: /Public Key:/,
+      signatureValue: /0x[0-9a-f]{128}/i,
+      publicKeyValue: /0x[0-9a-f]{128}/i,
+    },
+    json: {
+      hasMessage: /"message"\s*:/,
+      hasSignature: /"signature"\s*:/,
+      hasPublicKey: /"publicKey"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+
+  // Test cases with different string messages
+  testMessages: [
+    { message: 'hello', description: 'simple word' },
+    { message: 'Hello, World!', description: 'greeting with punctuation' },
+    { message: 'test message 123', description: 'message with spaces and numbers' },
+    { message: 'a', description: 'single character' },
+    { message: '', description: 'empty message' },
+    { message: 'The quick brown fox jumps over the lazy dog', description: 'pangram' },
+  ],
+
+  // Test cases with hex-encoded byte messages
+  testHexMessages: [
+    { message: '0x48656c6c6f', description: 'hex bytes for "Hello"' },
+    { message: '0xdeadbeef', description: 'typical hex bytes' },
+    { message: '0x00', description: 'single zero byte' },
+    { message: '0x0000000000000000000000000000000000000000000000000000000000000001', description: '32 bytes' },
+    {
+      message: '0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20',
+      description: 'sequential bytes'
+    },
+  ],
+
+  // Test secret keys for signing
+  testSecrets: [
+    {
+      secret: '0x0000000000000000000000000000000000000000000000000000000000000001',
+      description: 'secret key = 1',
+    },
+    {
+      secret: '0x0000000000000000000000000000000000000000000000000000000000000042',
+      description: 'secret key = 0x42',
+    },
+    {
+      secret: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+      description: 'typical hex secret',
+    },
+  ],
+};
+
+/**
+ * Extracts the validity status from human-readable verify CLI output
+ * @param output - The CLI output string
+ * @returns true if valid, false if invalid, null if not found
+ */
+export function extractValid(output: string): boolean | null {
+  const validMatch = output.match(/Valid:\s*✓\s*YES/i);
+  if (validMatch) {
+    return true;
+  }
+  const invalidMatch = output.match(/Valid:\s*✗\s*NO/i);
+  if (invalidMatch) {
+    return false;
+  }
+  return null;
+}
+
+/**
+ * Validates the structure of a VerifiedSignature JSON response
+ * @param obj - The object to validate
+ * @returns true if valid structure
+ */
+export function isValidVerifiedSignatureJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.message === 'string' &&
+    typeof obj.signature === 'string' &&
+    typeof obj.publicKey === 'string' &&
+    typeof obj.valid === 'boolean'
+  );
+}
+
+/**
+ * Test vectors for signature verification
+ */
+export const VERIFY_SIGNATURE_TEST_VECTORS = {
+  // Expected output patterns for human-readable format
+  patterns: {
+    humanReadable: {
+      header: /Schnorr Signature Verification/,
+      separator: /={50}/,
+      messageLabel: /Message:/,
+      signatureLabel: /Signature:/,
+      publicKeyLabel: /Public Key:/,
+      validLabel: /Valid:/,
+      validYes: /✓\s*YES/,
+      validNo: /✗\s*NO/,
+    },
+    json: {
+      hasMessage: /"message"\s*:/,
+      hasSignature: /"signature"\s*:/,
+      hasPublicKey: /"publicKey"\s*:/,
+      hasValid: /"valid"\s*:/,
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+};
