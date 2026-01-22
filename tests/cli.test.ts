@@ -1,5 +1,7 @@
 import { program } from '../cli/cli.js';
 import {
+  isValidSecretKey,
+  isValidFieldElement,
   extractSecretKey,
   extractWarning,
   areKeysDifferent,
@@ -8,6 +10,7 @@ import {
   isValidDerivedKeysJson,
   extractDerivedSecretKeys,
   extractDerivedPublicKeys,
+  isValidAztecAddress,
   extractAddress,
   isValidDerivedAddressJson,
   DERIVE_ADDRESS_TEST_VECTORS,
@@ -173,6 +176,8 @@ describe('CLI Commands', () => {
         const secretKey = extractSecretKey(output);
 
         expect(secretKey).not.toBeNull();
+        expect(isValidSecretKey(secretKey!)).toBe(true);
+        expect(isValidFieldElement(secretKey!)).toBe(true);
       });
 
       it('should include the expected security warning', async () => {
@@ -259,6 +264,7 @@ describe('CLI Commands', () => {
         expect(output).toMatch(KEY_TEST_VECTORS.patterns.humanReadable.header);
         const secretKey = extractSecretKey(output);
         expect(secretKey).not.toBeNull();
+        expect(isValidFieldElement(secretKey!)).toBe(true);
       });
 
       it('should generate keys within valid field element range', async () => {
@@ -274,6 +280,7 @@ describe('CLI Commands', () => {
         for (const output of outputs) {
           const secretKey = extractSecretKey(output);
           expect(secretKey).not.toBeNull();
+          expect(isValidFieldElement(secretKey!)).toBe(true);
         }
       });
 
@@ -318,6 +325,10 @@ describe('CLI Commands', () => {
         const secretKeys = extractDerivedSecretKeys(output);
 
         expect(secretKeys).not.toBeNull();
+        expect(isValidFieldElement(secretKeys!.masterNullifierSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
+        expect(isValidFieldElement(secretKeys!.masterTaggingSecretKey)).toBe(true);
       });
 
       it('should derive different keys for each key type', async () => {
@@ -416,6 +427,10 @@ describe('CLI Commands', () => {
           const secretKeys = extractDerivedSecretKeys(output);
 
           expect(secretKeys).not.toBeNull();
+          expect(isValidFieldElement(secretKeys!.masterNullifierSecretKey)).toBe(true);
+          expect(isValidFieldElement(secretKeys!.masterIncomingViewingSecretKey)).toBe(true);
+          expect(isValidFieldElement(secretKeys!.masterOutgoingViewingSecretKey)).toBe(true);
+          expect(isValidFieldElement(secretKeys!.masterTaggingSecretKey)).toBe(true);
         }
       });
 
@@ -611,6 +626,7 @@ describe('CLI Commands', () => {
         const address = extractAddress(output);
 
         expect(address).not.toBeNull();
+        expect(await isValidAztecAddress(address!)).toBe(true);
       });
 
       it('should derive the correct address for known test vectors', async () => {
@@ -660,6 +676,7 @@ describe('CLI Commands', () => {
           const address = extractAddress(output);
 
           expect(address).not.toBeNull();
+          expect(await isValidAztecAddress(address!)).toBe(true);
         }
       });
 
@@ -671,7 +688,7 @@ describe('CLI Commands', () => {
         expect(output).toMatch(DERIVE_ADDRESS_TEST_VECTORS.patterns.json.hasAddress);
 
         const parsed = parseJsonOutput(output);
-        expect(isValidDerivedAddressJson(parsed)).toBe(true);
+        expect(await isValidDerivedAddressJson(parsed)).toBe(true);
       });
 
       it('should produce correct address in JSON format', async () => {
@@ -706,6 +723,7 @@ describe('CLI Commands', () => {
           // Should still produce a valid address
           const address = extractAddress(output);
           expect(address).not.toBeNull();
+          expect(await isValidAztecAddress(address!)).toBe(true);
         });
 
         it('should derive different addresses with different salts', async () => {
@@ -743,6 +761,7 @@ describe('CLI Commands', () => {
             const address = extractAddress(output);
 
             expect(address).not.toBeNull();
+            expect(await isValidAztecAddress(address!)).toBe(true);
           }
         });
 
@@ -762,8 +781,9 @@ describe('CLI Commands', () => {
           const parsed = parseJsonOutput(output);
           expect(parsed).not.toBeNull();
           expect(parsed.address).toBeDefined();
-    });
-  });
+          expect(await isValidAztecAddress(parsed.address)).toBe(true);
+        });
+      });
 
       // Tests with string passphrase
       describe('with string passphrase', () => {
@@ -772,6 +792,7 @@ describe('CLI Commands', () => {
 
           const address = extractAddress(output);
           expect(address).not.toBeNull();
+          expect(await isValidAztecAddress(address!)).toBe(true);
         });
 
         it('should show derived secret key when using string passphrase', async () => {
@@ -844,6 +865,7 @@ describe('CLI Commands', () => {
 
           const address = extractAddress(output);
           expect(address).not.toBeNull();
+          expect(await isValidAztecAddress(address!)).toBe(true);
           expect(output).toContain('Salt:');
         });
 
@@ -870,6 +892,7 @@ describe('CLI Commands', () => {
           expect(parsed).not.toBeNull();
           expect(parsed.address).toBeDefined();
           expect(parsed.secretKey).toBeDefined();
+          expect(await isValidAztecAddress(parsed.address)).toBe(true);
           expect(parsed.secretKey.startsWith('0x')).toBe(true);
         });
 
@@ -1051,7 +1074,7 @@ describe('CLI Commands', () => {
           expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasStoragePath);
 
           const parsed = parseJsonOutput(output);
-          expect(isValidImportedKeyJson(parsed)).toBe(true);
+          expect(await isValidImportedKeyJson(parsed)).toBe(true);
           expect(parsed.encrypted).toBe(true);
         });
 
@@ -1090,7 +1113,7 @@ describe('CLI Commands', () => {
           ]);
 
           const parsed = parseJsonOutput(output);
-          expect(isValidImportedKeyJson(parsed)).toBe(true);
+          expect(await isValidImportedKeyJson(parsed)).toBe(true);
           expect(parsed.encrypted).toBe(false);
           expect(parsed.storagePath).toContain('keys.json');
         });
