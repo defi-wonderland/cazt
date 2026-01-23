@@ -1074,7 +1074,7 @@ describe('CLI Commands', () => {
           expect(output).toMatch(IMPORT_KEY_TEST_VECTORS.patterns.json.hasStoragePath);
 
           const parsed = parseJsonOutput(output);
-          expect(await isValidImportedKeyJson(parsed)).toBe(true);
+          expect(isValidImportedKeyJson(parsed)).toBe(true);
           expect(parsed.encrypted).toBe(true);
         });
 
@@ -1113,7 +1113,7 @@ describe('CLI Commands', () => {
           ]);
 
           const parsed = parseJsonOutput(output);
-          expect(await isValidImportedKeyJson(parsed)).toBe(true);
+          expect(isValidImportedKeyJson(parsed)).toBe(true);
           expect(parsed.encrypted).toBe(false);
           expect(parsed.storagePath).toContain('keys.json');
         });

@@ -540,7 +540,7 @@ export function extractKeystorePath(output: string): string | null {
  * @param obj - The object to validate
  * @returns true if valid structure
  */
-export async function isValidImportedKeyJson(obj: any): Promise<boolean> {
+export function isValidImportedKeyJson(obj: any): boolean {
   return (
     obj !== null &&
     typeof obj === 'object' &&
