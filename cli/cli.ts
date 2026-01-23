@@ -227,24 +227,36 @@ keyCmd
 
 keyCmd
   .command('import <secret>')
-  .description('Import a secret key with an alias for local storage')
+  .description('Import a secret key with an alias (encrypted by default)')
   .requiredOption('--alias <name>', 'Alias to store the key under')
+  .option('--no-encrypt', 'Store without encryption (not recommended for production)')
+  .option('--password <password>', 'Password for encryption (will prompt if not provided)')
   .option('--force', 'Overwrite existing alias if it exists')
-  .action(async (secret: string, options: { alias: string; force?: boolean }) => {
+  .action(async (secret: string, options: { alias: string; encrypt: boolean; password?: string; force?: boolean }) => {
     try {
       const { WalletUtils } = await import('./utils/wallet.js');
-      const result = await WalletUtils.importKey(secret, options.alias, options.force || false);
+
+      if (options.encrypt && !options.password) {
+        console.log('Importing secret key (encrypted)...');
+        console.log('');
+      }
+
+      const result = await WalletUtils.importKey(secret, options.alias, {
+        encrypted: options.encrypt,
+        password: options.password,
+        force: options.force,
+      });
 
       if (program.opts().json) {
         console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
       } else {
+        console.log('');
         console.log('Imported Secret Key');
         console.log('='.repeat(50));
         console.log('');
         console.log(`Alias: ${result.alias}`);
-        console.log(`Secret: ${result.secret}`);
-        console.log('');
-        console.log(`Stored in: ${result.keystorePath}`);
+        console.log(`Encrypted: ${result.encrypted ? 'yes' : 'no'}`);
+        console.log(`Stored in: ${result.storagePath}`);
         console.log('');
         console.log(`WARNING: ${result.warning}`);
       }
@@ -256,11 +268,12 @@ keyCmd
 
 keyCmd
   .command('export <alias>')
-  .description('Export a secret key by its alias from local storage')
-  .action(async (alias: string) => {
+  .description('Export a secret key by its alias (prompts for password if encrypted)')
+  .option('--password <password>', 'Password for encrypted secrets (will prompt if not provided)')
+  .action(async (alias: string, options: { password?: string }) => {
     try {
       const { WalletUtils } = await import('./utils/wallet.js');
-      const result = await WalletUtils.exportKey(alias);
+      const result = await WalletUtils.exportKey(alias, options.password);
 
       if (program.opts().json) {
         console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
@@ -269,10 +282,8 @@ keyCmd
         console.log('='.repeat(50));
         console.log('');
         console.log(`Alias: ${result.alias}`);
+        console.log(`Encrypted: ${result.encrypted ? 'yes' : 'no'}`);
         console.log(`Secret: ${result.secret}`);
-        console.log('');
-        console.log(`Created: ${new Date(result.createdAt).toLocaleString()}`);
-        console.log(`Updated: ${new Date(result.updatedAt).toLocaleString()}`);
         console.log('');
         console.log(`WARNING: ${result.warning}`);
       }
@@ -285,7 +296,7 @@ keyCmd
 keyCmd
   .command('list')
   .alias('ls')
-  .description('List all stored key aliases')
+  .description('List all stored secrets with encryption status')
   .action(async () => {
     try {
       const { WalletUtils } = await import('./utils/wallet.js');
@@ -294,20 +305,46 @@ keyCmd
       if (program.opts().json) {
         console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
       } else {
-        console.log('Stored Key Aliases');
+        console.log('Stored Secrets');
         console.log('='.repeat(50));
-        if (result.aliases.length === 0) {
-          console.log('');
-          console.log('No keys stored');
+        console.log('');
+        console.log(`Storage: ${result.storagePath}`);
+        console.log('');
+        if (result.secrets.length === 0) {
+          console.log('No secrets stored');
         } else {
-          console.log('');
-          for (const alias of result.aliases) {
-            console.log(`  ${alias}`);
+          for (const secret of result.secrets) {
+            const status = secret.encrypted ? '(encrypted)' : '(plain)';
+            console.log(`  ${secret.alias} ${status}`);
           }
         }
       }
     } catch (error: any) {
       console.error(`Error listing keys: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+keyCmd
+  .command('delete <alias>')
+  .alias('rm')
+  .description('Delete a stored secret by its alias')
+  .action(async (alias: string) => {
+    try {
+      const { WalletUtils } = await import('./utils/wallet.js');
+      const result = await WalletUtils.deleteKey(alias);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify({ deleted: true, ...result }, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Deleted Secret');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Alias: ${result.alias}`);
+        console.log(`Was encrypted: ${result.encrypted ? 'yes' : 'no'}`);
+      }
+    } catch (error: any) {
+      console.error(`Error deleting key: ${error.message}`);
       process.exit(1);
     }
   });
@@ -375,6 +412,164 @@ keyCmd
       }
     } catch (error: any) {
       console.error(`Error verifying signature: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// =============================================================================
+// KEYSTORE SUBCOMMAND (Encrypted file-based storage)
+// =============================================================================
+
+const keystoreCmd = keyCmd.command('keystore').description('Encrypted keystore file management');
+
+keystoreCmd
+  .command('create <name>')
+  .description('Create an encrypted keystore file from a secret key')
+  .requiredOption('--secret <key>', 'Secret key to encrypt (hex string)')
+  .option('--password <password>', 'Password for encryption (will prompt if not provided)')
+  .option('--keystore-dir <dir>', 'Directory to store keystore files', undefined)
+  .action(async (name: string, options: { secret: string; password?: string; keystoreDir?: string }) => {
+    try {
+      const { EncryptedKeystore } = await import('./utils/encrypted-keystore.js');
+      const result = await EncryptedKeystore.createKeystore(options.secret, name, {
+        password: options.password,
+        keystoreDir: options.keystoreDir,
+      });
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('');
+        console.log('Created Encrypted Keystore');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Name: ${result.name}`);
+        console.log(`Path: ${result.path}`);
+        console.log(`UUID: ${result.id}`);
+        console.log(`Cipher: ${result.cipher}`);
+        console.log(`KDF: ${result.kdf}`);
+        console.log('');
+        console.log(`WARNING: ${result.warning}`);
+      }
+    } catch (error: any) {
+      console.error(`Error creating keystore: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+keystoreCmd
+  .command('unlock <name>')
+  .description('Decrypt and display the secret from a keystore')
+  .option('--password <password>', 'Password for decryption (will prompt if not provided)')
+  .option('--keystore-dir <dir>', 'Directory containing keystore files', undefined)
+  .action(async (name: string, options: { password?: string; keystoreDir?: string }) => {
+    try {
+      const { EncryptedKeystore } = await import('./utils/encrypted-keystore.js');
+      const result = await EncryptedKeystore.unlock(name, {
+        password: options.password,
+        keystoreDir: options.keystoreDir,
+      });
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('');
+        console.log('Unlocked Keystore');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Name: ${result.name}`);
+        console.log(`UUID: ${result.id}`);
+        console.log(`Secret: ${result.secret}`);
+        console.log('');
+        console.log(`WARNING: ${result.warning}`);
+      }
+    } catch (error: any) {
+      console.error(`Error unlocking keystore: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+keystoreCmd
+  .command('inspect <name>')
+  .description('Display keystore metadata without decrypting')
+  .option('--keystore-dir <dir>', 'Directory containing keystore files', undefined)
+  .action(async (name: string, options: { keystoreDir?: string }) => {
+    try {
+      const { EncryptedKeystore } = await import('./utils/encrypted-keystore.js');
+      const result = await EncryptedKeystore.inspect(name, options.keystoreDir);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Keystore Information');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Name: ${result.name}`);
+        console.log(`Path: ${result.path}`);
+        console.log(`UUID: ${result.id}`);
+        console.log(`Version: ${result.version}`);
+        console.log(`Cipher: ${result.cipher}`);
+        console.log(`KDF: ${result.kdf}`);
+      }
+    } catch (error: any) {
+      console.error(`Error inspecting keystore: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+keystoreCmd
+  .command('list')
+  .alias('ls')
+  .description('List all keystores in the keystore directory')
+  .option('--keystore-dir <dir>', 'Directory containing keystore files', undefined)
+  .action(async (options: { keystoreDir?: string }) => {
+    try {
+      const { EncryptedKeystore } = await import('./utils/encrypted-keystore.js');
+      const result = await EncryptedKeystore.list(options.keystoreDir);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify(result, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Keystores');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Directory: ${result.directory}`);
+        console.log('');
+        if (result.keystores.length === 0) {
+          console.log('No keystores found');
+        } else {
+          for (const ks of result.keystores) {
+            console.log(`  ${ks.name} (${ks.id})`);
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error(`Error listing keystores: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+keystoreCmd
+  .command('delete <name>')
+  .alias('rm')
+  .description('Delete a keystore file')
+  .option('--keystore-dir <dir>', 'Directory containing keystore files', undefined)
+  .action(async (name: string, options: { keystoreDir?: string }) => {
+    try {
+      const { EncryptedKeystore } = await import('./utils/encrypted-keystore.js');
+      const result = await EncryptedKeystore.delete(name, options.keystoreDir);
+
+      if (program.opts().json) {
+        console.log(JSON.stringify({ deleted: true, ...result }, null, program.opts().noPretty ? 0 : 2));
+      } else {
+        console.log('Deleted Keystore');
+        console.log('='.repeat(50));
+        console.log('');
+        console.log(`Name: ${result.name}`);
+        console.log(`Path: ${result.path}`);
+      }
+    } catch (error: any) {
+      console.error(`Error deleting keystore: ${error.message}`);
       process.exit(1);
     }
   });

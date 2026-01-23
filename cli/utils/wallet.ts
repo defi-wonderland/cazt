@@ -5,8 +5,9 @@
 import { Fr, Fq, Point } from '@aztec/foundation/fields';
 import { deriveKeys } from '@aztec/stdlib/keys';
 import { randomBytes, Schnorr, SchnorrSignature } from '@aztec/foundation/crypto';
-import { poseidon2Hash } from '@aztec/foundation/crypto/sync';
+import { poseidon2HashBytes } from '@aztec/foundation/crypto/sync'; 
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
+import { SecretManager } from './secret-manager.js';
 import { KeyStore } from './keystore.js';
 import { WARNINGS } from '../constants.js';
 
@@ -36,25 +37,25 @@ function messageToBuffer(message: string): Buffer {
 
 /**
  * Convert a string passphrase to a secret key
- * Pads the string to 32 characters with '#' and hashes with Poseidon2
+ * Hashes the raw UTF-8 bytes directly with Poseidon2
+ * Supports passphrases of any length (no padding needed)
  */
 function passphraseToSecretKey(passphrase: string): Fr {
-  // Pad with '#' to 32 characters (right-pad)
-  const padded = passphrase.padEnd(32, '#');
-  const buffer = Buffer.from(padded, 'utf-8');
-  const fieldElement = Fr.fromBufferReduce(buffer);
-  // Hash with Poseidon2 for proper key derivation
-  return poseidon2Hash([fieldElement]);
+  const buffer = Buffer.from(passphrase, 'utf-8');
+  // Hash the raw bytes directly with Poseidon2
+  return poseidon2HashBytes(buffer);
 }
 
 /**
  * Resolve a secret key from either a direct input or an alias
+ * For encrypted secrets, will prompt for password
  * @param secret - Direct secret key (optional)
- * @param alias - Alias to load from keystore (optional)
+ * @param alias - Alias to load from storage (optional)
+ * @param password - Optional password for encrypted secrets
  * @returns The resolved secret key string
  * @throws Error if neither or both are provided
  */
-export async function resolveSecret(secret?: string, alias?: string): Promise<string> {
+export async function resolveSecret(secret?: string, alias?: string, password?: string): Promise<string> {
   if (secret && alias) {
     throw new Error('Cannot specify both <secret> and --alias. Use one or the other.');
   }
@@ -63,8 +64,8 @@ export async function resolveSecret(secret?: string, alias?: string): Promise<st
   }
 
   if (alias) {
-    const storedKey = await KeyStore.load(alias);
-    return storedKey.secret;
+    // Use SecretManager - will prompt for password if encrypted
+    return await SecretManager.resolve(alias, password);
   }
 
   return secret!;
@@ -102,8 +103,8 @@ export interface DerivedKeys {
 export interface ImportedKey {
   alias: string;
   secret: string;
-  stored: boolean;
-  keystorePath: string;
+  encrypted: boolean;
+  storagePath: string;
   warning: string;
 }
 
@@ -113,8 +114,7 @@ export interface ImportedKey {
 export interface ExportedKey {
   alias: string;
   secret: string;
-  createdAt: string;
-  updatedAt: string;
+  encrypted: boolean;
   warning: string;
 }
 
@@ -122,7 +122,11 @@ export interface ExportedKey {
  * Result type for listing keys
  */
 export interface ListedKeys {
-  aliases: string[];
+  secrets: Array<{
+    alias: string;
+    encrypted: boolean;
+  }>;
+  storagePath: string;
 }
 
 /**
@@ -225,12 +229,19 @@ export class WalletUtils {
 
   /**
    * Import a secret key with an alias for local storage
+   * Encrypted by default for security
    * @param secretKeyStr - Secret key as a string (hex or decimal)
    * @param alias - Alias to store the key under
-   * @param force - Whether to overwrite existing alias
+   * @param options - Import options (encrypted, password, force)
    * @returns Information about the imported key
    */
-  static async importKey(secretKeyStr: string, alias: string, force: boolean = false): Promise<ImportedKey> {
+  static async importKey(
+    secretKeyStr: string,
+    alias: string,
+    options: { encrypted?: boolean; password?: string; force?: boolean } = {}
+  ): Promise<ImportedKey> {
+    const { encrypted = true, password, force = false } = options;
+
     // Validate that the secret key is a valid field element
     let secretKey: Fr;
     try {
@@ -242,55 +253,69 @@ export class WalletUtils {
     // Normalize the secret key to hex format
     const normalizedSecret = secretKey.toString();
 
-    // Validate alias format
-    if (!KeyStore.isValidAlias(alias)) {
-      throw new Error(
-        `Invalid alias '${alias}'. Must start with letter/underscore, contain only alphanumeric/underscore/dash, and be 1-64 characters.`
-      );
-    }
+    // Import using SecretManager
+    const result = await SecretManager.import(alias, normalizedSecret, {
+      encrypted,
+      password,
+      force,
+    });
 
-    // Store the key in the keystore
-    await KeyStore.save(alias, normalizedSecret, force);
+    const warning = encrypted
+      ? WARNINGS.KEY_ENCRYPTED
+      : WARNINGS.KEY_UNENCRYPTED;
 
     return {
       alias,
       secret: normalizedSecret,
-      stored: true,
-      keystorePath: KeyStore.getKeysFilePath(),
-      warning: WARNINGS.KEY_IMPORT,
+      encrypted: result.encrypted,
+      storagePath: result.path,
+      warning,
     };
   }
 
   /**
    * Export a secret key by its alias from local storage
+   * Will prompt for password if encrypted
    * @param alias - Alias of the key to export
-   * @returns Information about the exported key including timestamps
+   * @param password - Optional password for encrypted secrets
+   * @returns Information about the exported key
    */
-  static async exportKey(alias: string): Promise<ExportedKey> {
-    // Load the key from keystore
-    const storedKey = await KeyStore.load(alias);
+  static async exportKey(alias: string, password?: string): Promise<ExportedKey> {
+    // Export using SecretManager - will prompt for password if encrypted
+    const result = await SecretManager.export(alias, password);
 
     return {
-      alias: storedKey.alias,
-      secret: storedKey.secret,
-      createdAt: storedKey.createdAt,
-      updatedAt: storedKey.updatedAt,
+      alias: result.alias,
+      secret: result.secret,
+      encrypted: result.encrypted,
       warning: WARNINGS.KEY_EXPORT,
     };
   }
 
   /**
-   * List all stored key aliases
-   * @returns Array of all stored key aliases
+   * List all stored secrets (both encrypted and unencrypted)
+   * @returns Array of all stored secrets with encryption status
    */
   static async listKeys(): Promise<ListedKeys> {
-    // Get all stored keys from keystore
-    const storedKeys = await KeyStore.list();
+    const secrets = await SecretManager.list();
 
-    // Extract just the aliases and return
     return {
-      aliases: storedKeys.map(k => k.alias),
+      secrets: secrets.map(s => ({
+        alias: s.alias,
+        encrypted: s.encrypted,
+      })),
+      storagePath: SecretManager.getStoragePath(),
     };
+  }
+
+  /**
+   * Delete a secret by its alias
+   * @param alias - Alias of the secret to delete
+   * @returns Information about the deleted secret
+   */
+  static async deleteKey(alias: string): Promise<{ alias: string; encrypted: boolean }> {
+    const result = await SecretManager.delete(alias);
+    return { alias, encrypted: result.encrypted ?? false };
   }
 
   /**
