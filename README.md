@@ -193,12 +193,8 @@ cazt key keystore create <name> --secret <key>   # Create (prompts for password)
 cazt key keystore unlock <name>                   # Decrypt and show secret
 cazt key keystore inspect <name>                  # View metadata (no password)
 cazt key keystore list                            # List all keystores
-cazt key keystore ls                              # Alias for list
 cazt key keystore delete <name>                   # Delete keystore file
-cazt key keystore rm <name>                       # Alias for delete
 ```
-
-All keystore commands support `--keystore-dir <dir>` to specify a custom directory for keystore files.
 
 ## Roadmap
 

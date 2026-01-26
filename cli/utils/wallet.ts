@@ -6,10 +6,12 @@ import { Fr, Fq } from '@aztec/foundation/curves/bn254';
 import { Point } from '@aztec/foundation/curves/grumpkin';
 import { deriveKeys } from '@aztec/stdlib/keys';
 import { randomBytes } from '@aztec/foundation/crypto/random';
-import { poseidon2HashBytes } from '@aztec/foundation/crypto/poseidon';
+import { poseidon2HashBytes } from '@aztec/foundation/crypto/sync';
 import { Schnorr, SchnorrSignature } from '@aztec/foundation/crypto/schnorr';
 import { getSchnorrAccountContractAddress } from '@aztec/accounts/schnorr';
 import { SecretManager } from './secret-manager.js';
+import { KeyStore } from './keystore.js';
+import { WARNINGS } from '../constants.js';
 
 /**
  * Check if a string looks like a hex field value or numeric string
@@ -40,10 +42,10 @@ function messageToBuffer(message: string): Buffer {
  * Hashes the raw UTF-8 bytes directly with Poseidon2
  * Supports passphrases of any length (no padding needed)
  */
-async function passphraseToSecretKey(passphrase: string): Promise<Fr> {
+function passphraseToSecretKey(passphrase: string): Fr {
   const buffer = Buffer.from(passphrase, 'utf-8');
   // Hash the raw bytes directly with Poseidon2
-  return await poseidon2HashBytes(buffer);
+  return poseidon2HashBytes(buffer);
 }
 
 /**
@@ -161,7 +163,7 @@ export class WalletUtils {
 
     return {
       secretKey: secretKey.toString(),
-      warning: 'SECURITY WARNING: Store this secret key securely. Anyone with access can control associated accounts.',
+      warning: WARNINGS.KEY_GENERATE,
     };
   }
 
@@ -210,7 +212,7 @@ export class WalletUtils {
 
     // If it's not a hex/numeric string, treat it as a passphrase
     if (!isHexOrNumericString(secretKeyStr)) {
-      secretKey = await passphraseToSecretKey(secretKeyStr);
+      secretKey = passphraseToSecretKey(secretKeyStr);
       derivedSecretKey = secretKey.toString();
     } else {
       secretKey = Fr.fromString(secretKeyStr);
@@ -261,8 +263,8 @@ export class WalletUtils {
     });
 
     const warning = encrypted
-      ? 'Your secret is encrypted. Remember your password - it cannot be recovered.'
-      : 'SECURITY WARNING: Your secret is stored unencrypted. Consider using encryption for production keys.';
+      ? WARNINGS.KEY_ENCRYPTED
+      : WARNINGS.KEY_UNENCRYPTED;
 
     return {
       alias,
@@ -288,7 +290,7 @@ export class WalletUtils {
       alias: result.alias,
       secret: result.secret,
       encrypted: result.encrypted,
-      warning: 'SECURITY WARNING: Handle this secret key carefully. Anyone with access can control associated accounts.',
+      warning: WARNINGS.KEY_EXPORT,
     };
   }
 
@@ -331,7 +333,7 @@ export class WalletUtils {
     
     // If it's not a hex/numeric string, treat it as a passphrase
     if (!isHexOrNumericString(secretKeyStr)) {
-      secretKeyFr = await passphraseToSecretKey(secretKeyStr);
+      secretKeyFr = passphraseToSecretKey(secretKeyStr);
       derivedSecretKey = secretKeyFr.toString();
     } else {
       try {
