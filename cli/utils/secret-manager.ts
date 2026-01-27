@@ -11,9 +11,9 @@
 
 import { promises as fs } from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { EncryptedKeystore } from './encrypted-keystore.js';
 import { promptPassword } from './password.js';
+import { getKeystoresDir as sharedGetKeystoresDir, ensureDir, isTestMode } from './paths.js';
 
 /**
  * Stored secret metadata
@@ -79,10 +79,7 @@ export class SecretManager {
     if (SecretManager._customDir) {
       return SecretManager._customDir;
     }
-    const suffix = process.env.NODE_ENV === 'test' || process.env.CAZT_TEST_MODE === 'true'
-      ? '_test'
-      : '';
-    return path.join(os.homedir(), '.cazt', `keystores${suffix}`);
+    return sharedGetKeystoresDir();
   }
 
   /**
@@ -111,8 +108,7 @@ export class SecretManager {
    * Ensure keystores directory exists
    */
   private static async ensureDirectory(): Promise<void> {
-    const dir = SecretManager.getKeystoresDir();
-    await fs.mkdir(dir, { mode: SecretManager.DIR_MODE, recursive: true });
+    await ensureDir(SecretManager.getKeystoresDir());
   }
 
   /**

@@ -32,6 +32,8 @@ import * as crypto from 'crypto';
 import { randomBytes } from '@aztec/foundation/crypto/random';
 import { keccak256 } from '@aztec/foundation/crypto/keccak';
 import { scrypt } from '@noble/hashes/scrypt';
+import { getKeystoresDir } from './paths.js';
+import { aesCtrEncrypt, aesCtrDecrypt, DEFAULT_SCRYPT_PARAMS as SHARED_SCRYPT_PARAMS } from './keystore-crypto.js';
 
 /**
  * Interface for the crypto section of a keystore file
@@ -79,19 +81,14 @@ export interface DecryptKeystoreResult {
 }
 
 /**
- * Default scrypt parameters (same as Ethereum standard)
+ * Default scrypt parameters (re-exported from shared module)
  */
-const DEFAULT_SCRYPT_PARAMS = {
-  N: 262144, // Cost parameter (2^18)
-  r: 8, // Block size
-  p: 1, // Parallelization
-  dkLen: 32, // Derived key length
-};
+const DEFAULT_SCRYPT_PARAMS = SHARED_SCRYPT_PARAMS;
 
 /**
- * Default keystore directory (follows Foundry pattern)
+ * Default keystore directory (uses centralized paths)
  */
-const DEFAULT_KEYSTORE_DIR = path.join(process.env.HOME || '~', '.cazt', 'keystores');
+const DEFAULT_KEYSTORE_DIR = getKeystoresDir();
 
 /**
  * Get the default keystore directory
@@ -123,29 +120,7 @@ function generateUuid(): string {
   return crypto.randomUUID();
 }
 
-/**
- * AES-128-CTR encryption (standard Ethereum cipher)
- * @param data - Data to encrypt
- * @param key - 16-byte encryption key
- * @param iv - 16-byte initialization vector
- * @returns Encrypted data
- */
-function aesCtrEncrypt(data: Buffer, key: Buffer, iv: Buffer): Buffer {
-  const cipher = crypto.createCipheriv('aes-128-ctr', key, iv);
-  return Buffer.concat([cipher.update(data), cipher.final()]);
-}
-
-/**
- * AES-128-CTR decryption (standard Ethereum cipher)
- * @param data - Data to decrypt
- * @param key - 16-byte encryption key
- * @param iv - 16-byte initialization vector
- * @returns Decrypted data
- */
-function aesCtrDecrypt(data: Buffer, key: Buffer, iv: Buffer): Buffer {
-  const decipher = crypto.createDecipheriv('aes-128-ctr', key, iv);
-  return Buffer.concat([decipher.update(data), decipher.final()]);
-}
+// aesCtrEncrypt and aesCtrDecrypt are imported from keystore-crypto.js
 
 /**
  * Encrypted Keystore Utilities

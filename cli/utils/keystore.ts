@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { getCaztDir, isTestMode, ensureDir } from './paths.js';
 
 /**
  * Interface for stored key data
@@ -28,7 +28,6 @@ interface KeyStoreData {
  * in ~/.cazt/keys_test.json to prevent accidentally wiping real keys
  */
 export class KeyStore {
-  private static readonly DEFAULT_DIR = path.join(os.homedir(), '.cazt');
   private static readonly DEFAULT_FILE = 'keys.json';
   private static readonly VERSION = '1.0.0';
   private static readonly FILE_MODE = 0o600; // Read/write for owner only
@@ -56,7 +55,7 @@ export class KeyStore {
   }
 
   private static get CAZT_DIR(): string {
-    return KeyStore._customDir ?? KeyStore.DEFAULT_DIR;
+    return KeyStore._customDir ?? getCaztDir();
   }
 
   private static get KEYS_FILE(): string {
@@ -65,25 +64,11 @@ export class KeyStore {
   }
 
   /**
-   * Determines if we're in test mode
-   */
-  private static isTestMode(): boolean {
-    return process.env.NODE_ENV === 'test' || process.env.CAZT_TEST_MODE === 'true';
-  }
-
-  /**
-   * Gets the CAZT directory (always ~/.cazt)
-   */
-  private static getCaztDir(): string {
-    return path.join(os.homedir(), '.cazt');
-  }
-
-  /**
    * Gets the keys file path based on test mode
    */
   private static getKeysFile(): string {
-    const filename = KeyStore.isTestMode() ? 'keys_test.json' : 'keys.json';
-    return path.join(KeyStore.getCaztDir(), filename);
+    const filename = isTestMode() ? 'keys_test.json' : 'keys.json';
+    return path.join(getCaztDir(), filename);
   }
 
   /**
@@ -101,13 +86,7 @@ export class KeyStore {
    * Ensures the appropriate .cazt directory exists with proper permissions
    */
   private static async ensureDirectory(): Promise<void> {
-    try {
-      await fs.mkdir(KeyStore.getCaztDir(), { mode: 0o700, recursive: true });
-    } catch (error: any) {
-      if (error.code !== 'EEXIST') {
-        throw new Error(`Failed to create keystore directory: ${error.message}`);
-      }
-    }
+    await ensureDir(getCaztDir());
   }
 
   /**

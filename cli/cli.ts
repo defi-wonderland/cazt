@@ -574,6 +574,264 @@ keystoreCmd
     }
   });
 
+// ============================================================================
+// TX METADATA COMMANDS
+// ============================================================================
+
+const txCmd = program.command('tx').description('Transaction-related commands');
+
+const txMetadataCmd = txCmd.command('metadata').description('Manage transaction metadata');
+
+txMetadataCmd
+  .command('add <tx-hash>')
+  .description('Add metadata to a transaction')
+  .option('-l, --label <label>', 'Short label for the transaction')
+  .option('-d, --description <desc>', 'Longer description (encrypted)')
+  .option('-t, --tags <tags>', 'Comma-separated tags')
+  .option('-c, --custom <json>', 'Custom JSON data (encrypted)')
+  .option('--contract <address>', 'Associated contract address')
+  .option('--password <password>', 'Password for encryption (will prompt if not provided)')
+  .option('--no-encrypt', 'Store without encryption (testing only)')
+  .action(async (txHash: string, options: {
+    label?: string;
+    description?: string;
+    tags?: string;
+    custom?: string;
+    contract?: string;
+    password?: string;
+    encrypt: boolean;
+  }) => {
+    try {
+      const { TxMetadataStore } = await import('./storage/tx-metadata-store.js');
+      const { promptPassword } = await import('./utils/password.js');
+
+      // Parse custom JSON if provided
+      let customData: Record<string, unknown> | undefined;
+      if (options.custom) {
+        try {
+          customData = JSON.parse(options.custom);
+        } catch {
+          throw new Error('Invalid custom JSON data');
+        }
+      }
+
+      // Parse tags
+      const tags = options.tags?.split(',').map(t => t.trim()).filter(t => t.length > 0);
+
+      const store = await TxMetadataStore.open();
+
+      try {
+        if (options.encrypt) {
+          // Get password
+          const password = options.password ?? await promptPassword('Enter password to encrypt metadata: ');
+
+          await store.add(txHash, {
+            label: options.label,
+            description: options.description,
+            tags,
+            custom: customData,
+            contractAddress: options.contract,
+          }, password);
+        } else {
+          await store.addPlaintext(txHash, {
+            label: options.label,
+            description: options.description,
+            tags,
+            custom: customData,
+            contractAddress: options.contract,
+          });
+        }
+
+        if (program.opts().json) {
+          console.log(JSON.stringify({
+            success: true,
+            txHash,
+            label: options.label,
+            tags,
+            encrypted: options.encrypt,
+          }, null, program.opts().noPretty ? 0 : 2));
+        } else {
+          console.log('Metadata Added');
+          console.log('='.repeat(50));
+          console.log('');
+          console.log(`Transaction: ${txHash}`);
+          if (options.label) console.log(`Label: ${options.label}`);
+          if (tags?.length) console.log(`Tags: ${tags.join(', ')}`);
+          console.log(`Encrypted: ${options.encrypt ? 'yes' : 'no'}`);
+          if (options.encrypt) {
+            console.log('');
+            console.log('WARNING: Remember your password. There is no way to recover encrypted metadata.');
+          }
+        }
+      } finally {
+        await store.close();
+      }
+    } catch (error: any) {
+      console.error(`Error adding metadata: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+txMetadataCmd
+  .command('get <tx-hash>')
+  .description('Get metadata for a transaction (requires password for encrypted entries)')
+  .option('--password <password>', 'Password for decryption (will prompt if not provided)')
+  .action(async (txHash: string, options: { password?: string }) => {
+    try {
+      const { TxMetadataStore } = await import('./storage/tx-metadata-store.js');
+      const { promptPassword } = await import('./utils/password.js');
+
+      const store = await TxMetadataStore.open();
+
+      try {
+        // First check if entry exists
+        if (!(await store.exists(txHash))) {
+          if (program.opts().json) {
+            console.log(JSON.stringify({ found: false, txHash }, null, program.opts().noPretty ? 0 : 2));
+          } else {
+            console.log(`No metadata found for transaction ${txHash}`);
+          }
+          return;
+        }
+
+        // Try to get with password
+        const password = options.password ?? await promptPassword('Enter password to decrypt metadata: ');
+        const metadata = await store.get(txHash, password);
+
+        if (!metadata) {
+          console.log(`No metadata found for transaction ${txHash}`);
+          return;
+        }
+
+        if (program.opts().json) {
+          console.log(JSON.stringify(metadata, null, program.opts().noPretty ? 0 : 2));
+        } else {
+          console.log('Transaction Metadata');
+          console.log('='.repeat(50));
+          console.log('');
+          console.log(`Transaction: ${metadata.txHash}`);
+          if (metadata.label) console.log(`Label: ${metadata.label}`);
+          if (metadata.description) console.log(`Description: ${metadata.description}`);
+          if (metadata.tags?.length) console.log(`Tags: ${metadata.tags.join(', ')}`);
+          if (metadata.contractAddress) console.log(`Contract: ${metadata.contractAddress}`);
+          if (metadata.functionName) console.log(`Function: ${metadata.functionName}`);
+          console.log(`Created: ${new Date(metadata.createdAt).toISOString()}`);
+          console.log(`Updated: ${new Date(metadata.updatedAt).toISOString()}`);
+          if (metadata.custom) {
+            console.log(`Custom: ${JSON.stringify(metadata.custom)}`);
+          }
+        }
+      } finally {
+        await store.close();
+      }
+    } catch (error: any) {
+      console.error(`Error getting metadata: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+txMetadataCmd
+  .command('list')
+  .alias('ls')
+  .description('List all transaction metadata (no password required)')
+  .option('--tag <tag>', 'Filter by tag')
+  .option('--contract <address>', 'Filter by contract address')
+  .option('--limit <n>', 'Limit number of results', parseInt)
+  .action(async (options: { tag?: string; contract?: string; limit?: number }) => {
+    try {
+      const { TxMetadataStore } = await import('./storage/tx-metadata-store.js');
+
+      const store = await TxMetadataStore.open();
+
+      try {
+        const entries = await store.list({
+          tag: options.tag,
+          contract: options.contract,
+          limit: options.limit,
+        });
+
+        if (program.opts().json) {
+          console.log(JSON.stringify(entries, null, program.opts().noPretty ? 0 : 2));
+        } else if (entries.length === 0) {
+          console.log('No metadata entries found');
+        } else {
+          console.log('Transaction Metadata');
+          console.log('='.repeat(50));
+          console.log('');
+
+          for (const entry of entries) {
+            const label = entry.label ?? '(no label)';
+            const tags = entry.tags?.length ? ` [${entry.tags.join(', ')}]` : '';
+            // Truncate hash for display
+            const shortHash = entry.txHash.length > 18
+              ? `${entry.txHash.slice(0, 18)}...`
+              : entry.txHash;
+            console.log(`${shortHash} - ${label}${tags}`);
+          }
+
+          console.log('');
+          console.log(`Total: ${entries.length} entries`);
+        }
+      } finally {
+        await store.close();
+      }
+    } catch (error: any) {
+      console.error(`Error listing metadata: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+txMetadataCmd
+  .command('delete <tx-hash>')
+  .alias('rm')
+  .description('Delete metadata for a transaction')
+  .option('--force', 'Skip confirmation prompt')
+  .action(async (txHash: string, options: { force?: boolean }) => {
+    try {
+      const { TxMetadataStore } = await import('./storage/tx-metadata-store.js');
+      const { promptConfirm } = await import('./utils/password.js');
+
+      const store = await TxMetadataStore.open();
+
+      try {
+        // Check if exists
+        if (!(await store.exists(txHash))) {
+          if (program.opts().json) {
+            console.log(JSON.stringify({ deleted: false, txHash, reason: 'not found' }, null, program.opts().noPretty ? 0 : 2));
+          } else {
+            console.log(`No metadata found for transaction ${txHash}`);
+          }
+          return;
+        }
+
+        // Confirm deletion
+        if (!options.force) {
+          const confirmed = await promptConfirm(`Delete metadata for ${txHash}? (y/N): `);
+          if (!confirmed) {
+            console.log('Deletion cancelled');
+            return;
+          }
+        }
+
+        const deleted = await store.delete(txHash);
+
+        if (program.opts().json) {
+          console.log(JSON.stringify({ deleted, txHash }, null, program.opts().noPretty ? 0 : 2));
+        } else {
+          console.log('Metadata Deleted');
+          console.log('='.repeat(50));
+          console.log('');
+          console.log(`Transaction: ${txHash}`);
+        }
+      } finally {
+        await store.close();
+      }
+    } catch (error: any) {
+      console.error(`Error deleting metadata: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 
