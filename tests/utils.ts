@@ -1,5 +1,6 @@
 import { Fr } from '@aztec/foundation/curves/bn254';
 import { AztecAddress } from '@aztec/stdlib/aztec-address';
+import { program } from '../cli/cli.js';
 
 /**
  * Test utilities and test vectors for CLI tests
@@ -8,6 +9,100 @@ import { AztecAddress } from '@aztec/stdlib/aztec-address';
 import { Point } from '@aztec/foundation/curves/grumpkin';
 import { Schnorr, SchnorrSignature } from '@aztec/foundation/crypto/schnorr';
 import { WARNINGS } from '../cli/constants.js';
+
+// ============================================================================
+// Shared Test Infrastructure
+// ============================================================================
+
+/**
+ * Console output capture for tests
+ */
+let consoleOutput: string[] = [];
+let originalLog: typeof console.log;
+let originalError: typeof console.error;
+let originalStderrWrite: typeof process.stderr.write;
+
+/**
+ * Setup console mocking - call in beforeEach
+ */
+export function setupConsoleMock(): void {
+  consoleOutput = [];
+  originalLog = console.log;
+  originalError = console.error;
+  originalStderrWrite = process.stderr.write;
+
+  console.log = ((...args: any[]) => {
+    consoleOutput.push(args.map(String).join(' '));
+  }) as typeof console.log;
+
+  console.error = ((...args: any[]) => {
+    consoleOutput.push(args.map(String).join(' '));
+  }) as typeof console.error;
+
+  process.stderr.write = ((chunk: any) => {
+    consoleOutput.push(String(chunk).trim());
+    return true;
+  }) as typeof process.stderr.write;
+}
+
+/**
+ * Teardown console mocking - call in afterEach
+ */
+export function teardownConsoleMock(): void {
+  console.log = originalLog;
+  console.error = originalError;
+  process.stderr.write = originalStderrWrite;
+}
+
+/**
+ * Helper function to execute a CLI command and capture output
+ */
+export async function executeCommand(args: string[], expectError = false): Promise<string> {
+  consoleOutput = [];
+  const originalArgv = process.argv;
+  const originalExit = process.exit;
+  let exitCalled = false;
+
+  process.exit = ((code?: number) => {
+    exitCalled = true;
+    throw new Error(`Process exited with code ${code || 0}`);
+  }) as typeof process.exit;
+
+  process.argv = ['node', 'cli.js', ...args];
+
+  try {
+    // Reset all option values including negated boolean options
+    function resetCommandOptions(cmd: any): void {
+      cmd._optionValues = {};
+      // Reset options to their default values
+      if (cmd.options) {
+        for (const option of cmd.options) {
+          if (option.negate) {
+            // For --no-* options, the positive version defaults to true
+            cmd._optionValues[option.attributeName()] = true;
+          }
+        }
+      }
+      cmd.commands.forEach((subcmd: any) => resetCommandOptions(subcmd));
+    }
+    resetCommandOptions(program);
+
+    await program.parseAsync(process.argv);
+    if (expectError && !exitCalled) {
+      throw new Error('Expected command to fail but it succeeded');
+    }
+    return consoleOutput.join('\n');
+  } catch (error: any) {
+    if (expectError) {
+      const output = consoleOutput.join('\n');
+      return output || error.message;
+    }
+    throw error;
+  } finally {
+    process.argv = originalArgv;
+    process.exit = originalExit;
+  }
+}
 
 /**
  * Validates that a string is a valid hexadecimal secret key
@@ -1138,5 +1233,216 @@ export function isValidKeystoreFile(obj: any): boolean {
     typeof obj.crypto?.kdfparams?.r === 'number' &&
     typeof obj.crypto?.kdfparams?.p === 'number' &&
     typeof obj.crypto?.kdfparams?.dklen === 'number'
+  );
+}
+
+// ============================================================================
+// TX Metadata Test Vectors and Utilities
+// ============================================================================
+
+/**
+ * Test vectors for TX metadata operations
+ */
+export const TX_METADATA_TEST_VECTORS = {
+  // Valid transaction hashes
+  validTxHashes: [
+    '0x' + '1234567890abcdef'.repeat(4),
+    '0x' + 'a'.repeat(64),
+    '0x' + '0'.repeat(64),
+  ],
+
+  // Invalid transaction hashes
+  invalidTxHashes: [
+    'not-a-hash',
+    '0x123', // too short
+    '0x' + 'g'.repeat(64), // invalid hex
+    '', // empty
+  ],
+
+  // Sample metadata entries
+  sampleMetadata: [
+    {
+      label: 'DEX Swap',
+      description: 'Swapped tokens on Uniswap',
+      tags: ['defi', 'swap'],
+      custom: { protocol: 'uniswap' },
+    },
+    {
+      label: 'Transfer',
+      description: 'Sent tokens to Alice',
+      tags: ['token', 'transfer'],
+    },
+    {
+      label: 'Mint NFT',
+      tags: ['nft', 'mint'],
+      contractAddress: '0x' + 'b'.repeat(40),
+    },
+  ],
+
+  // Test password
+  testPassword: 'test-password-for-metadata-123',
+  wrongPassword: 'wrong-password',
+
+  // Expected output patterns
+  patterns: {
+    add: {
+      header: /Metadata Added/,
+      separator: /={50}/,
+      transactionLabel: /Transaction:/,
+      labelLabel: /Label:/,
+      encryptedLabel: /Encrypted:/,
+      warningLabel: /WARNING:/,
+    },
+    get: {
+      header: /Transaction Metadata/,
+      separator: /={50}/,
+      transactionLabel: /Transaction:/,
+      labelLabel: /Label:/,
+      descriptionLabel: /Description:/,
+      tagsLabel: /Tags:/,
+      createdLabel: /Created:/,
+      updatedLabel: /Updated:/,
+    },
+    list: {
+      header: /Transaction Metadata/,
+      separator: /={50}/,
+      totalLabel: /Total:/,
+      noEntries: /No metadata entries found/,
+    },
+    update: {
+      header: /Metadata Updated/,
+      separator: /={50}/,
+      transactionLabel: /Transaction:/,
+      updatedFieldsLabel: /Updated fields:/,
+    },
+    delete: {
+      header: /Metadata Deleted/,
+      separator: /={50}/,
+      transactionLabel: /Transaction:/,
+    },
+    json: {
+      validJson: /^\{[\s\S]*\}$/,
+    },
+  },
+};
+
+/**
+ * Generates a random transaction hash for testing
+ */
+export function generateRandomTxHash(): string {
+  const chars = '0123456789abcdef';
+  let hash = '0x';
+  for (let i = 0; i < 64; i++) {
+    hash += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return hash;
+}
+
+/**
+ * Validates that a string is a valid transaction hash
+ */
+export function isValidTxHash(hash: string): boolean {
+  return /^0x[0-9a-fA-F]{64}$/.test(hash);
+}
+
+/**
+ * Extracts the transaction hash from CLI output
+ */
+export function extractTxHash(output: string): string | null {
+  const match = output.match(/Transaction:\s*(0x[0-9a-f]{64})/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Extracts the label from CLI metadata output
+ */
+export function extractMetadataLabel(output: string): string | null {
+  const match = output.match(/Label:\s*(.+?)(?:\n|$)/);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Extracts the description from CLI metadata output
+ */
+export function extractMetadataDescription(output: string): string | null {
+  const match = output.match(/Description:\s*(.+?)(?:\n|$)/);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Extracts tags from CLI metadata output
+ */
+export function extractMetadataTags(output: string): string[] | null {
+  const match = output.match(/Tags:\s*(.+?)(?:\n|$)/);
+  if (!match) return null;
+  return match[1].split(',').map(t => t.trim()).filter(Boolean);
+}
+
+/**
+ * Extracts the total count from list output
+ */
+export function extractMetadataTotal(output: string): number | null {
+  const match = output.match(/Total:\s*(\d+)/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Validates the structure of a TX metadata add JSON response
+ */
+export function isValidTxMetadataAddJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    obj.success === true &&
+    typeof obj.txHash === 'string' &&
+    typeof obj.encrypted === 'boolean' &&
+    isValidTxHash(obj.txHash)
+  );
+}
+
+/**
+ * Validates the structure of a TX metadata get JSON response
+ */
+export function isValidTxMetadataGetJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.txHash === 'string' &&
+    typeof obj.createdAt === 'number' &&
+    typeof obj.updatedAt === 'number' &&
+    isValidTxHash(obj.txHash)
+  );
+}
+
+/**
+ * Validates the structure of a TX metadata list JSON response
+ * The list command outputs the entries array directly
+ */
+export function isValidTxMetadataListJson(obj: any): boolean {
+  return Array.isArray(obj);
+}
+
+/**
+ * Validates the structure of a TX metadata update JSON response
+ */
+export function isValidTxMetadataUpdateJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    obj.updated === true &&
+    typeof obj.txHash === 'string' &&
+    Array.isArray(obj.fields)
+  );
+}
+
+/**
+ * Validates the structure of a TX metadata delete JSON response
+ */
+export function isValidTxMetadataDeleteJson(obj: any): boolean {
+  return (
+    obj !== null &&
+    typeof obj === 'object' &&
+    typeof obj.deleted === 'boolean' &&
+    typeof obj.txHash === 'string'
   );
 }
