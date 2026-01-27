@@ -832,6 +832,95 @@ txMetadataCmd
     }
   });
 
+// ─────────────────────────────────────────────────────────────
+// Update Command
+// ─────────────────────────────────────────────────────────────
+
+txMetadataCmd
+  .command('update <tx-hash>')
+  .description('Update metadata for a transaction (requires password)')
+  .option('-l, --label <label>', 'New label for the transaction')
+  .option('-d, --description <description>', 'New description (encrypted)')
+  .option('-t, --tags <tags>', 'New comma-separated tags (replaces existing)')
+  .option('-c, --custom <json>', 'New custom JSON data (replaces existing)')
+  .option('--contract <address>', 'New associated contract address')
+  .option('--function <name>', 'New function name')
+  .option('--password <password>', 'Password for decryption/encryption (will prompt if not provided)')
+  .action(async (txHash: string, options: {
+    label?: string;
+    description?: string;
+    tags?: string;
+    custom?: string;
+    contract?: string;
+    function?: string;
+    password?: string;
+  }) => {
+    try {
+      const { TxMetadataStore } = await import('./storage/tx-metadata-store.js');
+      const { promptPassword } = await import('./utils/password.js');
+
+      // Check if any update fields provided
+      if (!options.label && !options.description && !options.tags && !options.custom && !options.contract && !options.function) {
+        console.error('Error: At least one update field must be provided (--label, --description, --tags, --custom, --contract, --function)');
+        process.exit(1);
+      }
+
+      const store = await TxMetadataStore.open();
+
+      try {
+        // Check if exists
+        if (!(await store.exists(txHash))) {
+          console.error(`No metadata found for transaction ${txHash}`);
+          process.exit(1);
+        }
+
+        // Get password
+        const password = options.password ?? await promptPassword('Enter password: ');
+
+        // Build updates object
+        const updates: Record<string, unknown> = {};
+        if (options.label !== undefined) updates.label = options.label;
+        if (options.description !== undefined) updates.description = options.description;
+        if (options.tags !== undefined) updates.tags = options.tags.split(',').map(t => t.trim()).filter(Boolean);
+        if (options.custom !== undefined) {
+          try {
+            updates.custom = JSON.parse(options.custom);
+          } catch {
+            console.error('Error: Invalid JSON for --custom option');
+            process.exit(1);
+          }
+        }
+        if (options.contract !== undefined) updates.contractAddress = options.contract;
+        if (options.function !== undefined) updates.functionName = options.function;
+
+        await store.update(txHash, updates, password);
+
+        if (program.opts().json) {
+          console.log(JSON.stringify({
+            updated: true,
+            txHash,
+            fields: Object.keys(updates),
+          }, null, program.opts().noPretty ? 0 : 2));
+        } else {
+          console.log('Metadata Updated');
+          console.log('='.repeat(50));
+          console.log('');
+          console.log(`Transaction: ${txHash}`);
+          console.log(`Updated fields: ${Object.keys(updates).join(', ')}`);
+        }
+      } finally {
+        await store.close();
+      }
+    } catch (error: any) {
+      if (error.message.includes('MAC verification failed')) {
+        console.error('Error: Invalid password');
+      } else {
+        console.error(`Error updating metadata: ${error.message}`);
+      }
+      process.exit(1);
+    }
+  });
+
 // Export program for testing
 export { program };
 
