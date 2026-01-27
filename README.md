@@ -70,6 +70,7 @@ cazt --rpc-url testnet <command>
 | Command | Description |
 |---------|-------------|
 | [`key`](#key) | Key generation, derivation, storage, and signing |
+| [`tx`](#transaction) | Transaction-related commands including metadata vault |
 
 ---
 
@@ -194,6 +195,74 @@ cazt key keystore unlock <name>                   # Decrypt and show secret
 cazt key keystore inspect <name>                  # View metadata (no password)
 cazt key keystore list                            # List all keystores
 cazt key keystore delete <name>                   # Delete keystore file
+```
+
+---
+
+### Transaction
+
+Transaction-related commands.
+
+```
+tx
+└── metadata          Encrypted local storage for transaction annotations
+    ├── add           Add metadata to a transaction
+    ├── get           Retrieve metadata (requires password)
+    ├── list (ls)     List all entries (no password needed)
+    ├── update        Update existing metadata
+    └── delete (rm)   Delete metadata
+```
+
+#### `tx metadata add`
+
+Add metadata to a transaction. Encrypted by default using GETH keystore format.
+
+```bash
+cazt tx metadata add <tx-hash> --label "DEX Swap"
+cazt tx metadata add <tx-hash> \
+  --label "DEX Swap" \
+  --description "Swapped 1 ETH for DAI" \
+  --tags "defi,swap" \
+  --contract 0xabcd...
+cazt tx metadata add <tx-hash> --label "Test" --password <pw>
+```
+
+#### `tx metadata get`
+
+Retrieve and decrypt metadata for a transaction.
+
+```bash
+cazt tx metadata get <tx-hash>
+cazt tx metadata get <tx-hash> --password <pw>
+```
+
+#### `tx metadata list`
+
+List all metadata entries. No password required.
+
+```bash
+cazt tx metadata list
+cazt tx metadata list --tag defi
+cazt tx metadata list --contract 0x...
+cazt tx metadata list --limit 20
+```
+
+#### `tx metadata update`
+
+Update metadata for an existing transaction.
+
+```bash
+cazt tx metadata update <tx-hash> --label "New Label"
+cazt tx metadata update <tx-hash> --tags "new,tags" --password <pw>
+```
+
+#### `tx metadata delete`
+
+Delete metadata for a transaction.
+
+```bash
+cazt tx metadata delete <tx-hash>
+cazt tx metadata delete <tx-hash> --force
 ```
 
 ## Roadmap
