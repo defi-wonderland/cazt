@@ -29,7 +29,8 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { randomBytes, keccak256 } from '@aztec/foundation/crypto';
+import { randomBytes } from '@aztec/foundation/crypto/random';
+import { keccak256 } from '@aztec/foundation/crypto/keccak';
 import { scrypt } from '@noble/hashes/scrypt';
 
 /**
