@@ -603,7 +603,7 @@ txMetadataCmd
   }) => {
     try {
       const { TxMetadataStore } = await import('./storage/tx-metadata-store.js');
-      const { promptPassword } = await import('./utils/password.js');
+      const { promptPasswordWithConfirm } = await import('./utils/password.js');
 
       // Parse custom JSON if provided
       let customData: Record<string, unknown> | undefined;
@@ -623,7 +623,7 @@ txMetadataCmd
       try {
         if (options.encrypt) {
           // Get password
-          const password = options.password ?? await promptPassword('Enter password to encrypt metadata: ');
+          const password = options.password ?? await promptPasswordWithConfirm();
 
           await store.add(txHash, {
             label: options.label,
@@ -762,11 +762,7 @@ txMetadataCmd
           for (const entry of entries) {
             const label = entry.label ?? '(no label)';
             const tags = entry.tags?.length ? ` [${entry.tags.join(', ')}]` : '';
-            // Truncate hash for display
-            const shortHash = entry.txHash.length > 18
-              ? `${entry.txHash.slice(0, 18)}...`
-              : entry.txHash;
-            console.log(`${shortHash} - ${label}${tags}`);
+            console.log(`${entry.txHash} - ${label}${tags}`);
           }
 
           console.log('');
