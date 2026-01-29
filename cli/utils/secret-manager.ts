@@ -276,13 +276,13 @@ export class SecretManager {
     if (status.encrypted) {
       // Decrypt keystore
       let pwd = password;
-      if (!pwd) {
+      if (pwd === undefined) {
         pwd = await promptPassword('Enter password: ');
       }
 
       // Allow empty passwords for decryption (if the keystore was created with one)
       const filePath = SecretManager.getEncryptedPath(alias);
-      const result = await EncryptedKeystore.decrypt(filePath, pwd ?? '');
+      const result = await EncryptedKeystore.decrypt(filePath, pwd);
 
       return {
         alias,

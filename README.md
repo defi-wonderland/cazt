@@ -70,7 +70,7 @@ cazt --rpc-url testnet <command>
 | Command | Description |
 |---------|-------------|
 | [`key`](#key) | Key generation, derivation, storage, and signing |
-| [`tx`](#transaction) | Transaction-related commands including metadata vault |
+| [`tx`](#transaction) | Transaction decoding and metadata management |
 
 ---
 
@@ -201,10 +201,11 @@ cazt key keystore delete <name>                   # Delete keystore file
 
 ### Transaction
 
-Transaction-related commands.
+Transaction decoding and metadata management.
 
 ```
 tx
+├── decode            Decode a transaction and decrypt private logs
 └── metadata          Encrypted local storage for transaction annotations
     ├── add           Add metadata to a transaction
     ├── get           Retrieve metadata (requires password)
@@ -212,6 +213,93 @@ tx
     ├── update        Update existing metadata
     └── delete (rm)   Delete metadata
 ```
+
+#### `tx decode`
+
+Decode a transaction and display its effects. Optionally decrypt private logs using your viewing keys.
+
+```bash
+cazt tx decode <tx-hash>
+cazt tx decode <tx-hash> --secret <key>
+cazt tx decode <tx-hash> --alias <name>
+cazt tx decode <tx-hash> --alias <name> --artifact ./Token.json
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-r, --rpc <url>` | Aztec node URL (or `CAZT_RPC_URL` env var) |
+| `-s, --secret <key>` | Secret key for decrypting private logs |
+| `-a, --alias <name>` | Use stored secret key by alias |
+| `--salt <value>` | Account salt for address derivation (default: 0) |
+| `--artifact <path>` | Contract artifact JSON for event decoding |
+| `--raw` | Include raw field values in output |
+| `--json` | Output as JSON |
+
+**Examples:**
+
+```bash
+# Basic decode - shows public summary only
+cazt tx decode 0x1234...abcd --rpc devnet
+
+# Decrypt private logs with a secret key
+cazt tx decode 0x1234...abcd --secret 0xabcd...1234
+
+# Decrypt using a stored alias (prompts for password if encrypted)
+cazt tx decode 0x1234...abcd --alias my-wallet
+
+# Decode events using contract artifact
+cazt tx decode 0x1234...abcd --alias my-wallet --artifact ./TokenContract.json
+
+# With custom salt (if account was created with non-zero salt)
+cazt tx decode 0x1234...abcd --secret 0xabcd... --salt 42
+
+# Raw output for debugging
+cazt tx decode 0x1234...abcd --raw
+
+# JSON output
+cazt tx decode 0x1234...abcd --alias my-wallet --json
+```
+
+**Output:**
+
+```
+Transaction: 0x1234...abcd
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Status:        success
+Block:         12345
+Fee:           82800640
+
+Public Summary:
+  Note hashes:     1
+  Nullifiers:      3
+  L2→L1 messages:  0
+  Private logs:    2 (encrypted)
+  Public logs:     0
+  Data writes:     1
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Your Data (Decrypted):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Found 1 log(s) for your keys:
+
+  [Log 0] Event: Transfer
+    Selector: 0x12345678
+    from: 0x1234...
+    to: 0x5678...
+    amount: 100
+
+Decryption: 1/2 logs decrypted
+```
+
+**Notes:**
+- Private log decryption requires your secret key (via `--secret` or `--alias`)
+- Event decoding requires the contract artifact (`--artifact`)
+- Without an artifact, decrypted logs show raw field values
+- Notes cannot be auto-decoded (note types are not in artifacts)
 
 #### `tx metadata add`
 
