@@ -496,7 +496,12 @@ export class TxMetadataStore {
     for await (const key of this.#index.keysAsync()) {
       await this.#index.delete(key);
     }
-    // Note: Clearing multimaps is more complex, we'll rebuild them
+    for await (const key of this.#byTag.keysAsync()) {
+      await this.#byTag.delete(key);
+    }
+    for await (const key of this.#byContract.keysAsync()) {
+      await this.#byContract.delete(key);
+    }
 
     // Rebuild from metadata
     for await (const txHash of this.#metadata.keysAsync()) {
