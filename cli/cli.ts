@@ -939,7 +939,7 @@ txCmd
     artifact?: string;
   }) => {
     try {
-      const { TxDecoderService, deriveCompleteAddressFromSecret } = await import('./utils/tx-decoder.js');
+      const { TxDecoderService, deriveCompleteAddressFromSecret, extractEventsFromArtifact } = await import('./utils/tx-decoder.js');
       const { resolveRpcUrl } = await import('./config/index.js');
       const { Fr } = await import('@aztec/aztec.js/fields');
 
@@ -965,8 +965,8 @@ txCmd
       // Connect to node
       const decoder = await TxDecoderService.connect(nodeUrl);
 
-      // Load artifact if provided
-      let artifact: any;
+      // Load artifact and extract events if provided
+      let events: Record<string, any> | undefined;
       if (options.artifact) {
         const fs = await import('fs');
         const path = await import('path');
@@ -974,13 +974,14 @@ txCmd
         if (!fs.existsSync(artifactPath)) {
           throw new Error(`Artifact file not found: ${artifactPath}`);
         }
-        artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf-8'));
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf-8'));
+        events = await extractEventsFromArtifact(artifact);
       }
 
       // Build decode options
-      const decodeOptions: { includeRaw?: boolean; secretKey?: string; completeAddress?: any; artifact?: any } = {
+      const decodeOptions: { includeRaw?: boolean; secretKey?: string; completeAddress?: any; events?: Record<string, any> } = {
         includeRaw: options.raw,
-        artifact,
+        events,
       };
 
       // If we have a secret key, derive the complete address for decryption
@@ -1029,9 +1030,9 @@ txCmd
           console.log('');
 
           // Show artifact context if provided
-          if (options.artifact) {
-            const artifactName = artifact?.name || 'Unknown';
-            console.log(`Artifact: ${artifactName}`);
+          if (options.artifact && events) {
+            const eventNames = Object.keys(events);
+            console.log(`Artifact events: ${eventNames.length > 0 ? eventNames.join(', ') : 'none'}`);
             console.log('');
           }
 

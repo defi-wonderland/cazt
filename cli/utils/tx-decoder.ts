@@ -14,6 +14,7 @@ import { deriveEcdhSharedSecret } from '@aztec/stdlib/logs';
 import { deriveMasterIncomingViewingSecretKey, computeAddressSecret, deriveKeys } from '@aztec/stdlib/keys';
 import { PRIVATE_LOG_CIPHERTEXT_LEN, GeneratorIndex } from '@aztec/constants';
 import { poseidon2HashWithSeparator } from '@aztec/foundation/crypto/poseidon';
+import { EventSelector, decodeFromAbi, type EventMetadataDefinition } from '@aztec/stdlib/abi';
 
 // ============================================================================
 // Types
@@ -95,8 +96,11 @@ export interface DecodeOptions {
   secretKey?: string;
   /** Complete address for decryption */
   completeAddress?: CompleteAddress;
-  /** Contract artifact for event decoding */
-  artifact?: any;
+  /**
+   * Event definitions for decoding. Pass the contract's `.events` object.
+   * Example: `TokenContract.events` or `{ Transfer: TokenContract.events.Transfer }`
+   */
+  events?: Record<string, EventMetadataDefinition>;
 }
 
 // ============================================================================
@@ -154,27 +158,23 @@ const MESSAGE_CIPHERTEXT_LEN = PRIVATE_LOG_CIPHERTEXT_LEN; // 17
 // Event Decoding Utilities
 // ============================================================================
 
-interface EventMetadata {
-  name: string;
-  selector: string;
-  selectorValue: number;
-  abiType: any;
-  fieldNames: string[];
-}
-
 /**
- * Extracts event metadata from a contract artifact.
- * Events are stored in artifact.outputs.structs.events
+ * Extracts event definitions from a raw contract artifact JSON.
+ * Use this when loading artifacts from file (CLI use).
+ * For programmatic use with TypeScript contracts, use `Contract.events` directly.
+ *
+ * @param artifact - Raw contract artifact JSON (from compiled contract)
+ * @returns Record of event name to EventMetadataDefinition
  */
-export async function extractEventMetadata(artifact: any): Promise<EventMetadata[]> {
+export async function extractEventsFromArtifact(
+  artifact: any,
+): Promise<Record<string, EventMetadataDefinition>> {
   const events = artifact?.outputs?.structs?.events;
   if (!events || !Array.isArray(events)) {
-    return [];
+    return {};
   }
 
-  const { EventSelector } = await import('@aztec/stdlib/abi');
-
-  const metadata: EventMetadata[] = [];
+  const result: Record<string, EventMetadataDefinition> = {};
 
   for (const event of events) {
     // Extract event name from path (e.g., "token::Transfer" -> "Transfer")
@@ -185,23 +185,21 @@ export async function extractEventMetadata(artifact: any): Promise<EventMetadata
     const signature = `${name}(${fieldTypes.join(',')})`;
 
     // Compute event selector
-    const selector = await EventSelector.fromSignature(signature);
+    const eventSelector = await EventSelector.fromSignature(signature);
 
-    metadata.push({
-      name,
-      selector: selector.toString(),
-      selectorValue: selector.value,
+    result[name] = {
+      eventSelector,
       abiType: event,
       fieldNames: event.fields?.map((f: any) => f.name) || [],
-    });
+    };
   }
 
-  return metadata;
+  return result;
 }
 
 /**
  * Converts an ABI type to its signature string representation.
- * Used for computing event selectors.
+ * Used for computing event selectors from raw artifacts.
  */
 function abiTypeToSignature(abiType: any): string {
   switch (abiType.kind) {
@@ -224,24 +222,28 @@ function abiTypeToSignature(abiType: any): string {
 }
 
 /**
- * Tries to match decrypted fields to an event from the artifact.
- * The event selector is typically in the last field.
+ * Tries to match decrypted fields to an event definition.
+ * The event selector is in the last field (per aztec.nr convention).
+ *
+ * @param fields - Decrypted log fields
+ * @param events - Event definitions from contract (e.g., `Contract.events`)
+ * @returns Matched event name and definition, or null if no match
  */
 export function matchEventFromFields(
   fields: Fr[],
-  eventMetadata: EventMetadata[],
-): EventMetadata | null {
-  if (fields.length === 0 || eventMetadata.length === 0) {
+  events: Record<string, EventMetadataDefinition>,
+): { name: string; definition: EventMetadataDefinition } | null {
+  if (fields.length === 0) {
     return null;
   }
 
   // Event selector is in the last field (per aztec.nr convention)
   const lastField = fields[fields.length - 1];
-  const selectorValue = Number(lastField.toBigInt() & BigInt(0xffffffff)); // Last 4 bytes
+  const logSelector = EventSelector.fromField(lastField);
 
-  for (const event of eventMetadata) {
-    if (event.selectorValue === selectorValue) {
-      return event;
+  for (const [name, definition] of Object.entries(events)) {
+    if (logSelector.equals(definition.eventSelector)) {
+      return { name, definition };
     }
   }
 
@@ -249,24 +251,26 @@ export function matchEventFromFields(
 }
 
 /**
- * Decodes event fields using ABI type information.
+ * Decodes event fields using the event's ABI type.
  * Returns named fields with their decoded values.
+ *
+ * @param fields - Decrypted log fields
+ * @param definition - Event metadata definition
+ * @returns Decoded fields with names and values
  */
-export async function decodeEventFields(
+export function decodeEventFields(
   fields: Fr[],
-  event: EventMetadata,
-): Promise<{ name: string; value: string }[]> {
-  const { decodeFromAbi } = await import('@aztec/stdlib/abi');
-
+  definition: EventMetadataDefinition,
+): { name: string; value: string }[] {
   try {
     // Decode using the event's ABI type
-    const decoded = decodeFromAbi([event.abiType], fields);
+    const decoded = decodeFromAbi([definition.abiType], fields);
 
     // Map decoded values to field names
     const result: { name: string; value: string }[] = [];
 
     if (typeof decoded === 'object' && decoded !== null) {
-      for (const fieldName of event.fieldNames) {
+      for (const fieldName of definition.fieldNames) {
         const value = (decoded as any)[fieldName];
         result.push({
           name: fieldName,
@@ -279,7 +283,7 @@ export async function decodeEventFields(
   } catch {
     // If decoding fails, return raw fields with indices
     return fields.map((f, i) => ({
-      name: event.fieldNames[i] || `field[${i}]`,
+      name: definition.fieldNames[i] || `field[${i}]`,
       value: f.toString(),
     }));
   }
@@ -529,7 +533,7 @@ export class TxDecoderService {
         effects.privateLogs,
         options.secretKey,
         options.completeAddress,
-        options.artifact,
+        options.events,
       );
     }
 
@@ -543,12 +547,9 @@ export class TxDecoderService {
     privateLogs: any[],
     secretKey: string,
     completeAddress: CompleteAddress,
-    artifact?: any,
+    events?: Record<string, EventMetadataDefinition>,
   ): Promise<DecryptedUserData> {
     const ivskM = deriveMasterIncomingViewingSecretKey(Fr.fromHexString(secretKey));
-
-    // Extract event metadata from artifact if provided
-    const eventMetadata = artifact ? await extractEventMetadata(artifact) : [];
 
     const incoming: DecryptedLog[] = [];
     let decryptionAttempts = 0;
@@ -576,14 +577,14 @@ export class TxDecoderService {
           fieldCount: decrypted.length,
         };
 
-        // Try to match and decode as event if artifact provided
-        if (eventMetadata.length > 0) {
-          const matchedEvent = matchEventFromFields(decrypted, eventMetadata);
-          if (matchedEvent) {
-            const decodedFields = await decodeEventFields(decrypted, matchedEvent);
+        // Try to match and decode as event if events provided
+        if (events && Object.keys(events).length > 0) {
+          const matched = matchEventFromFields(decrypted, events);
+          if (matched) {
+            const decodedFields = decodeEventFields(decrypted, matched.definition);
             decryptedLog.event = {
-              name: matchedEvent.name,
-              selector: matchedEvent.selector,
+              name: matched.name,
+              selector: matched.definition.eventSelector.toString(),
               decodedFields,
             };
           }
